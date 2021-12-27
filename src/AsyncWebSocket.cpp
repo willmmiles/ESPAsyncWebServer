@@ -458,8 +458,8 @@ AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
 /*
  * Async WebSocket Client
  */
- const char * AWSC_PING_PAYLOAD = "ESPAsyncWebServer-PING";
- const size_t AWSC_PING_PAYLOAD_LEN = 22;
+ const char * AWSC_PING_PAYLOAD = "awscPING";
+ const size_t AWSC_PING_PAYLOAD_LEN = 8;
 
 AsyncWebSocketClient::AsyncWebSocketClient(AsyncWebServerRequest *request, AsyncWebSocket *server)
   : _controlQueue(LinkedList<AsyncWebSocketControl *>([](AsyncWebSocketControl *c){ delete  c; }))
@@ -551,7 +551,7 @@ void AsyncWebSocketClient::_queueMessage(AsyncWebSocketMessage *dataMessage){
     return;
   }
   if(_messageQueue.length() >= WS_MAX_QUEUED_MESSAGES){
-      ets_printf("ERROR: Too many messages queued\n");
+      ets_printf("ERR WSq\n");
       delete dataMessage;
   } else {
       _messageQueue.add(dataMessage);
@@ -1241,8 +1241,8 @@ AsyncWebSocketResponse::AsyncWebSocketResponse(const String& key, AsyncWebSocket
   _code = 101;
   _sendContentLength = false;
 
-  uint8_t * hash[20];
-  char * buffer[33];
+  uint8_t hash[20];
+  char buffer[33];
 
 #ifdef ESP8266
   sha1(key + WS_STR_UUID, hash);

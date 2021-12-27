@@ -65,7 +65,7 @@ static bool getMD5(uint8_t * data, uint16_t len, char * output){//33 bytes or mo
     md5_context_t _ctx;
 #endif
   uint8_t i;
-  uint8_t * _buf[16] = {0};
+  uint8_t _buf[16] = {0};
 #ifdef ESP32
   mbedtls_md5_init(&_ctx);
   mbedtls_md5_starts_ret(&_ctx);
@@ -88,7 +88,7 @@ static String genRandomMD5(){
 #else
   uint32_t r = rand();
 #endif
-  char * out[33];
+  char out[33];
   if(out == NULL || !getMD5((uint8_t*)(&r), 4, out))
     return "";
   String res = String(out);
@@ -96,7 +96,7 @@ static String genRandomMD5(){
 }
 
 static String stringMD5(const String& in){
-  char * out[33];
+  char out[33];
   if(!getMD5((uint8_t*)(in.c_str()), in.length(), out))
     return "";
   String res = String(out);
@@ -107,7 +107,7 @@ String generateDigestHash(const char * username, const char * password, const ch
   if(username == NULL || password == NULL || realm == NULL){
     return "";
   }
-  char * out[33];
+  char out[33];
   String res = String(username);
   res.concat(":");
   res.concat(realm);
