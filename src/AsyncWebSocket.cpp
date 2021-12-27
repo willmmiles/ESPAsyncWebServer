@@ -831,7 +831,7 @@ void AsyncWebSocketClient::binary(AsyncWebSocketMessageBuffer * buffer)
 
 IPAddress AsyncWebSocketClient::remoteIP() {
     if(!_client) {
-        return IPAddress(0U);
+        return IPAddress((uint32_t)0);
     }
     return _client->remoteIP();
 }
@@ -1247,8 +1247,8 @@ AsyncWebSocketResponse::AsyncWebSocketResponse(const String& key, AsyncWebSocket
 #ifdef ESP8266
   sha1(key + WS_STR_UUID, hash);
 #else
-	(String&)key += WS_STR_UUID;
-	mbedtls_sha1_context ctx;
+  (String&)key += WS_STR_UUID;
+  mbedtls_sha1_context ctx;
   mbedtls_sha1_init(&ctx);
   mbedtls_sha1_starts_ret(&ctx);
   mbedtls_sha1_update_ret(&ctx, (const unsigned char*)key.c_str(), key.length());
