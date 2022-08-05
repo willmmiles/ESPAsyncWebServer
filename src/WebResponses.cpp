@@ -529,8 +529,8 @@ AsyncFileResponse::AsyncFileResponse(FS &fs, const String& path, const String& c
     // set filename and force download
     snprintf(buf, sizeof (buf), "attachment; filename=\"%s\"", filename);
   } else {
-    // set filename and force rendering
-    snprintf(buf, sizeof (buf), "inline; filename=\"%s\"", filename);
+    // force rendering
+    snprintf(buf, sizeof (buf), "inline");
   }
   addHeader("Content-Disposition", buf);
 }
@@ -561,7 +561,7 @@ AsyncFileResponse::AsyncFileResponse(File content, const String& path, const Str
   if(download) {
     snprintf(buf, sizeof (buf), "attachment; filename=\"%s\"", filename);
   } else {
-    snprintf(buf, sizeof (buf), "inline; filename=\"%s\"", filename);
+    snprintf(buf, sizeof (buf), "inline");
   }
   addHeader("Content-Disposition", buf);
 }
