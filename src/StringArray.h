@@ -29,7 +29,7 @@ class LinkedListNode {
     T _value;
   public:
     LinkedListNode<T>* next;
-    LinkedListNode(const T val): _value(val), next(nullptr) {}
+    LinkedListNode(T val): _value(std::move(val)), next(nullptr) {}
     ~LinkedListNode(){}
     const T& value() const { return _value; };
     T& value(){ return _value; }
@@ -43,11 +43,13 @@ class LinkedList {
     typedef std::function<bool(const T&)> Predicate;
   private:
     ItemType* _root;
+    ItemType* _last;    
     OnRemove _onRemove;
 
     class Iterator {
       ItemType* _node;
       ItemType* _nextNode = nullptr;
+      friend class LinkedList;
     public:
       Iterator(ItemType* current = nullptr) : _node(current) {
           _nextNode = _node != nullptr ? _node->next : nullptr;
@@ -64,23 +66,43 @@ class LinkedList {
       const T& operator * () const { return _node->value(); }
       const T* operator -> () const { return &_node->value(); }
     };
+
+    void _remove(ItemType* pit, ItemType* it) {
+        if(pit == nullptr){ // item is root
+          _root = _root->next;
+          if (_root == nullptr) {
+            _last = nullptr;
+          }
+        } else {
+          pit->next = it->next;
+          if (it == _last) {
+            _last = pit;
+          }
+        }
+        
+        if (_onRemove) {
+          _onRemove(it->value());
+        }
+        
+        delete it;
+    }
     
   public:
     typedef const Iterator ConstIterator;
     ConstIterator begin() const { return ConstIterator(_root); }
     ConstIterator end() const { return ConstIterator(nullptr); }
 
-    LinkedList(OnRemove onRemove) : _root(nullptr), _onRemove(onRemove) {}
-    ~LinkedList(){}
-    void add(const T& t){
-      auto it = new ItemType(t);
+    LinkedList(OnRemove onRemove) : _root(nullptr), _last(nullptr), _onRemove(onRemove) {}
+    ~LinkedList() { free(); }
+    void add(T t){
+      auto it = new ItemType(std::move(t));
       if(!_root){
         _root = it;
+        _last = it;
       } else {
-        auto i = _root;
-        while(i->next) i = i->next;
-        i->next = it;
+        _last->next = it;
       }
+      _last = it;
     }
     T& front() const {
       return _root->value();
@@ -124,20 +146,10 @@ class LinkedList {
     }
     bool remove(const T& t){
       auto it = _root;
-      auto pit = _root;
+      auto pit = decltype(it) { nullptr };
       while(it){
         if(it->value() == t){
-          if(it == _root){
-            _root = _root->next;
-          } else {
-            pit->next = it->next;
-          }
-          
-          if (_onRemove) {
-            _onRemove(it->value());
-          }
-          
-          delete it;
+          _remove(pit, it);
           return true;
         }
         pit = it;
@@ -147,18 +159,10 @@ class LinkedList {
     }
     bool remove_first(Predicate predicate){
       auto it = _root;
-      auto pit = _root;
+      auto pit = decltype(it) { nullptr };
       while(it){
         if(predicate(it->value())){
-          if(it == _root){
-            _root = _root->next;
-          } else {
-            pit->next = it->next;
-          }
-          if (_onRemove) {
-            _onRemove(it->value());
-          }
-          delete it;
+          _remove(pit, it);
           return true;
         }
         pit = it;
@@ -166,7 +170,25 @@ class LinkedList {
       }
       return false;
     }
-    
+    bool remove(const ConstIterator& t, const ConstIterator& where = ConstIterator(nullptr)) {
+      if (where._node) {
+        if ((where._nextNode) != t._node) return false;
+        _remove(where._node, t._node);
+        return true;
+      }
+
+      auto it = _root;
+      auto pit = decltype(it) { nullptr };
+      while(it){
+        if(it == t._node){
+          _remove(pit, it);
+          return true;
+        }
+        pit = it;
+        it = it->next;
+      }
+      return false;      
+    }    
     void free(){
       while(_root != nullptr){
         auto it = _root;
@@ -177,6 +199,7 @@ class LinkedList {
         delete it;
       }
       _root = nullptr;
+      _last = nullptr;
     }
 };
 
