@@ -130,12 +130,6 @@ void AsyncWebServerResponse::addHeader(String name, String value){
 }
 
 String AsyncWebServerResponse::_assembleHead(uint8_t version){
-  if(version){
-    addHeader(F("Accept-Ranges"), F("none"));
-    if(_chunked)
-      addHeader(F("Transfer-Encoding"), F("chunked"));
-  }
-
   // Precalculate the output header block length
   size_t est_header_size = 10 + 4 + 2;  // HTTP://1.version code + newlines
   est_header_size += strlen_P((const char*) _responseCodeToString(_code));
@@ -144,6 +138,12 @@ String AsyncWebServerResponse::_assembleHead(uint8_t version){
   };
   if (_contentType.length()) {
     est_header_size += 16 + _contentType.length();
+  }
+  if (version) {
+    est_header_size += 14 + 5 + 4;
+    if (_chunked) {
+      est_header_size += 18 + 8 + 4;
+    }
   }
   for(const auto& header: _headers) {
     est_header_size += header.name().length() + header.value().length() + 4;
@@ -173,6 +173,13 @@ String AsyncWebServerResponse::_assembleHead(uint8_t version){
     out.concat(buf);
   }
   _headers.free();
+
+  if(version) {
+    out.concat(F("Accept-Ranges: none\r\n"));
+    if(_chunked) {
+      out.concat(F("Transfer-Encoding: chunked\r\n"));
+    }
+  }
 
   out.concat(F("\r\n"));
   _headLength = out.length();
