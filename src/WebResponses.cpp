@@ -84,7 +84,7 @@ const __FlashStringHelper* AsyncWebServerResponse::_responseCodeToString(int cod
 
 AsyncWebServerResponse::AsyncWebServerResponse()
   : _code(0)
-  , _headers(LinkedList<AsyncWebHeader *>([](AsyncWebHeader *h){ delete h; }))
+  , _headers({})
   , _contentType()
   , _contentLength(0)
   , _sendContentLength(true)
@@ -95,8 +95,8 @@ AsyncWebServerResponse::AsyncWebServerResponse()
   , _writtenLength(0)
   , _state(RESPONSE_SETUP)
 {
-  for(auto header: DefaultHeaders::Instance()) {
-    _headers.add(new AsyncWebHeader(header->name(), header->value()));
+  for(auto& header: DefaultHeaders::Instance()) {
+    _headers.add(header);
   }
 }
 
@@ -119,18 +119,33 @@ void AsyncWebServerResponse::setContentType(const String& type){
     _contentType = type;
 }
 
-void AsyncWebServerResponse::addHeader(const String& name, const String& value){
-  _headers.add(new AsyncWebHeader(name, value));
+void AsyncWebServerResponse::addHeader(String name, String value){
+  _headers.add(AsyncWebHeader(std::move(name), std::move(value)));
 }
 
 String AsyncWebServerResponse::_assembleHead(uint8_t version){
   if(version){
-    addHeader(F("Accept-Ranges"),F("none"));
+    addHeader(F("Accept-Ranges"), F("none"));
     if(_chunked)
-      addHeader(F("Transfer-Encoding"),F("chunked"));
+      addHeader(F("Transfer-Encoding"), F("chunked"));
   }
+
+  // Precalculate the output header block length
+  size_t est_header_size = 10 + 4 + 2;  // HTTP://1.version code + newlines
+  est_header_size += strlen_P((const char*) _responseCodeToString(_code));
+  if(_sendContentLength) {
+    est_header_size += 18 + 10; // GBs ought to be enough for anyone
+  };
+  if (_contentType.length()) {
+    est_header_size += 16 + _contentType.length();
+  }
+  for(const auto& header: _headers) {
+    est_header_size += header.name().length() + header.value().length() + 4;
+  };
+
   String out = String();
-  int bufSize = 300;
+  out.reserve(est_header_size);
+  const static int bufSize = 300;
   char buf[bufSize];
 
   snprintf_P(buf, bufSize, PSTR("HTTP/1.%d %d "), version, _code);
@@ -148,7 +163,7 @@ String AsyncWebServerResponse::_assembleHead(uint8_t version){
   }
 
   for(const auto& header: _headers){
-    snprintf_P(buf, bufSize, PSTR("%s: %s\r\n"), header->name().c_str(), header->value().c_str());
+    snprintf_P(buf, bufSize, PSTR("%s: %s\r\n"), header.name().c_str(), header.value().c_str());
     out.concat(buf);
   }
   _headers.free();
@@ -484,6 +499,9 @@ AsyncFileResponse::~AsyncFileResponse(){
     _content.close();
 }
 
+const static char GZIP_EXTENSION_PMEM[] PROGMEM = ".gz";
+const static auto GZIP_EXTENSION = FPSTR(GZIP_EXTENSION_PMEM);
+
 void AsyncFileResponse::_setContentType(const String& path){
   if (path.endsWith(F(".html"))) _contentType = F("text/html");
   else if (path.endsWith(F(".htm"))) _contentType = F("text/html");
@@ -502,13 +520,13 @@ void AsyncFileResponse::_setContentType(const String& path){
   else if (path.endsWith(F(".xml"))) _contentType = F("text/xml");
   else if (path.endsWith(F(".pdf"))) _contentType = F("application/pdf");
   else if (path.endsWith(F(".zip"))) _contentType = F("application/zip");
-  else if(path.endsWith(F(".gz"))) _contentType = F("application/x-gzip");
+  else if(path.endsWith(GZIP_EXTENSION)) _contentType = F("application/x-gzip");
   else _contentType = F("text/plain");
 }
 
 static File fs_open_zipped(FS& fs, const String& path, bool force_absolute) {
   if (!force_absolute && !fs.exists(path)) {
-    auto gz_path = path + F(".gz");
+    auto gz_path = path + GZIP_EXTENSION;
     if (fs.exists(gz_path)) return fs.open(gz_path, "r");
   }
   return fs.open(path, "r");
@@ -521,7 +539,7 @@ AsyncFileResponse::AsyncFileResponse(File content, const String& path, const Str
   _code = 200;
   _path = path;
 
-  if(!download && String(content.name()).endsWith(F(".gz")) && !path.endsWith(F(".gz"))){
+  if(!download && String(content.name()).endsWith(GZIP_EXTENSION) && !path.endsWith(GZIP_EXTENSION)){
     addHeader(F("Content-Encoding"), F("gzip"));
     _callback = nullptr; // Unable to process gzipped templates
     _sendContentLength = true;

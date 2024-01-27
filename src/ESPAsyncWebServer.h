@@ -163,9 +163,9 @@ class AsyncWebServerRequest {
     size_t _contentLength;
     size_t _parsedLength;
 
-    LinkedList<AsyncWebHeader *> _headers;
-    LinkedList<AsyncWebParameter *> _params;
-    LinkedList<String *> _pathParams;
+    LinkedList<AsyncWebHeader> _headers;
+    LinkedList<AsyncWebParameter> _params;
+    LinkedList<String> _pathParams;
 
     uint8_t _multiParseState;
     uint8_t _boundaryPosition;
@@ -186,7 +186,7 @@ class AsyncWebServerRequest {
     void _onDisconnect();
     void _onData(void *buf, size_t len);
 
-    void _addParam(AsyncWebParameter*);
+    void _addParam(AsyncWebParameter);
     void _addPathParam(const char *param);
 
     bool _parseReqHead();
@@ -358,7 +358,7 @@ typedef enum {
 class AsyncWebServerResponse {
   protected:
     int _code;
-    LinkedList<AsyncWebHeader *> _headers;
+    LinkedList<AsyncWebHeader> _headers;
     String _contentType;
     size_t _contentLength;
     bool _sendContentLength;
@@ -376,7 +376,7 @@ class AsyncWebServerResponse {
     virtual void setCode(int code);
     virtual void setContentLength(size_t len);
     virtual void setContentType(const String& type);
-    virtual void addHeader(const String& name, const String& value);
+    virtual void addHeader(String name, String value);
     virtual String _assembleHead(uint8_t version);
     virtual bool _started() const;
     virtual bool _finished() const;
@@ -440,17 +440,17 @@ class AsyncWebServer {
 };
 
 class DefaultHeaders {
-  using headers_t = LinkedList<AsyncWebHeader *>;
+  using headers_t = LinkedList<AsyncWebHeader>;
   headers_t _headers;
   
   DefaultHeaders()
-  :_headers(headers_t([](AsyncWebHeader *h){ delete h; }))
+  : _headers({})
   {}
 public:
   using ConstIterator = headers_t::ConstIterator;
 
-  void addHeader(const String& name, const String& value){
-    _headers.add(new AsyncWebHeader(name, value));
+  void addHeader(String name, String value){
+    _headers.add(AsyncWebHeader(std::move(name), std::move(value)));
   }  
   
   ConstIterator begin() const { return _headers.begin(); }
