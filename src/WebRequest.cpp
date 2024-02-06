@@ -738,8 +738,8 @@ void AsyncWebServerRequest::send(AsyncWebServerResponse *response){
   }
 }
 
-AsyncWebServerResponse * AsyncWebServerRequest::beginResponse(int code, const String& contentType, const String& content){
-  return new AsyncBasicResponse(code, contentType, content);
+AsyncWebServerResponse * AsyncWebServerRequest::beginResponse(int code, String contentType, String content){
+  return new AsyncBasicResponse(code, std::move(contentType), std::move(content));
 }
 
 AsyncWebServerResponse * AsyncWebServerRequest::beginResponse(FS &fs, const String& path, const String& contentType, bool download, AwsTemplateProcessor callback){
@@ -780,8 +780,8 @@ AsyncWebServerResponse * AsyncWebServerRequest::beginResponse_P(int code, const 
   return beginResponse_P(code, contentType, (const uint8_t *)content, strlen_P(content), callback);
 }
 
-void AsyncWebServerRequest::send(int code, const String& contentType, const String& content){
-  send(beginResponse(code, contentType, content));
+void AsyncWebServerRequest::send(int code, String contentType, String content){
+  send(beginResponse(code, std::move(contentType), std::move(content)));
 }
 
 void AsyncWebServerRequest::send(FS &fs, const String& path, const String& contentType, bool download, AwsTemplateProcessor callback){
@@ -816,9 +816,9 @@ void AsyncWebServerRequest::send_P(int code, const String& contentType, PGM_P co
   send(beginResponse_P(code, contentType, content, callback));
 }
 
-void AsyncWebServerRequest::redirect(const String& url){
+void AsyncWebServerRequest::redirect(String url){
   AsyncWebServerResponse * response = beginResponse(302);
-  response->addHeader("Location",url);
+  response->addHeader(F("Location"), std::move(url));
   send(response);
 }
 

@@ -33,7 +33,7 @@ class AsyncBasicResponse: public AsyncWebServerResponse {
   private:
     String _content;
   public:
-    AsyncBasicResponse(int code, const String& contentType=String(), const String& content=String());
+    AsyncBasicResponse(int code, String contentType=String(), String content=String());
     void _respond(AsyncWebServerRequest *request);
     size_t _ack(AsyncWebServerRequest *request, size_t len, uint32_t time);
     bool _sourceValid() const { return true; }

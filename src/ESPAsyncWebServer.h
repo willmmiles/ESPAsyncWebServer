@@ -90,7 +90,7 @@ class AsyncWebParameter {
 
   public:
 
-    AsyncWebParameter(const String& name, const String& value, bool form=false, bool file=false, size_t size=0): _name(name), _value(value), _size(size), _isForm(form), _isFile(file){}
+    AsyncWebParameter(String name, String value, bool form=false, bool file=false, size_t size=0): _name(std::move(name)), _value(std::move(value)), _size(size), _isForm(form), _isFile(file){}
     const String& name() const { return _name; }
     const String& value() const { return _value; }
     size_t size() const { return _size; }
@@ -108,7 +108,7 @@ class AsyncWebHeader {
     String _value;
 
   public:
-    AsyncWebHeader(const String& name, const String& value): _name(name), _value(value){}
+    AsyncWebHeader(String name, String value): _name(std::move(name)), _value(std::move(value)){}
     AsyncWebHeader(const String& data): _name(), _value(){
       if(!data) return;
       int index = data.indexOf(':');
@@ -231,10 +231,10 @@ class AsyncWebServerRequest {
     void setHandler(AsyncWebHandler *handler){ _handler = handler; }
     void addInterestingHeader(const String& name);
 
-    void redirect(const String& url);
+    void redirect(String url);
 
     void send(AsyncWebServerResponse *response);
-    void send(int code, const String& contentType=String(), const String& content=String());
+    void send(int code, String contentType=String(), String content=String());
     void send(FS &fs, const String& path, const String& contentType=String(), bool download=false, AwsTemplateProcessor callback=nullptr);
     void send(File content, const String& path, const String& contentType=String(), bool download=false, AwsTemplateProcessor callback=nullptr);
     void send(Stream &stream, const String& contentType, size_t len, AwsTemplateProcessor callback=nullptr);
@@ -243,7 +243,7 @@ class AsyncWebServerRequest {
     void send_P(int code, const String& contentType, const uint8_t * content, size_t len, AwsTemplateProcessor callback=nullptr);
     void send_P(int code, const String& contentType, PGM_P content, AwsTemplateProcessor callback=nullptr);
 
-    AsyncWebServerResponse *beginResponse(int code, const String& contentType=String(), const String& content=String());
+    AsyncWebServerResponse *beginResponse(int code, String contentType=String(), String content=String());
     AsyncWebServerResponse *beginResponse(FS &fs, const String& path, const String& contentType=String(), bool download=false, AwsTemplateProcessor callback=nullptr);
     AsyncWebServerResponse *beginResponse(File content, const String& path, const String& contentType=String(), bool download=false, AwsTemplateProcessor callback=nullptr);
     AsyncWebServerResponse *beginResponse(Stream &stream, const String& contentType, size_t len, AwsTemplateProcessor callback=nullptr);

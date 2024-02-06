@@ -196,10 +196,10 @@ size_t AsyncWebServerResponse::_ack(AsyncWebServerRequest *request, size_t len, 
 /*
  * String/Code Response
  * */
-AsyncBasicResponse::AsyncBasicResponse(int code, const String& contentType, const String& content){
+AsyncBasicResponse::AsyncBasicResponse(int code, String contentType, String content){
   _code = code;
-  _content = content;
-  _contentType = contentType;
+  _content = std::move(content);
+  _contentType = std::move(contentType);
   if(_content.length()){
     _contentLength = _content.length();
     if(!_contentType.length())
