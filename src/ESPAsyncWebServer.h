@@ -363,10 +363,10 @@ class AsyncWebServerResponse {
     size_t _contentLength;
     bool _sendContentLength;
     bool _chunked;
-    size_t _headLength;
-    size_t _sentLength;
-    size_t _ackedLength;
-    size_t _writtenLength;
+    size_t _headLength; // size of header
+    size_t _sentLength; // size of data read from source
+    size_t _ackedLength; // size of data acked by client
+    size_t _writtenLength; // size of data written to client
     WebResponseState _state;
     static const __FlashStringHelper* _responseCodeToString(int code);
 

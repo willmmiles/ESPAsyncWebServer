@@ -278,95 +278,136 @@ void AsyncAbstractResponse::_respond(AsyncWebServerRequest *request){
   _ack(request, 0, 0);
 }
 
+template<typename T>
+static void dealloc_vector(T& vec) {
+  vec = T{};  // move construct an empty vector; space will be freed when scope exits
+}
+
 size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
   (void)time;
+
   if(!_sourceValid()){
     _state = RESPONSE_FAILED;
     request->client()->close();
     return 0;
   }
   _ackedLength += len;
-  size_t space = request->client()->space();
 
+  size_t space = request->client()->space();  // TCP window space available; NOT a guarantee we can actually send this much  
   size_t headLen = _head.length();
+  bool needs_send = false;
+
   if(_state == RESPONSE_HEADERS){
-    if(space >= headLen){
-      _state = RESPONSE_CONTENT;
-      space -= headLen;
-    } else {
-      String out = _head.substring(0, space);
-      _head = _head.substring(space);
-      _writtenLength += request->client()->write(out.c_str(), out.length());
-      return out.length();
+    auto headWritten = request->client()->add(_head.c_str(), std::min(space, headLen));
+    _writtenLength += headWritten;
+    if (headWritten < headLen) {
+      _head = _head.substring(headWritten);
+      request->client()->send();
+      return headWritten;
     }
+    _state = RESPONSE_CONTENT;
+    space -= headWritten;
+    _head = String(); // done      
+    needs_send = true;
   }
 
   if(_state == RESPONSE_CONTENT){
-    size_t outLen;
+    if (_packet.size()) {
+      // Complete the cached data
+      auto written = request->client()->add((const char*) _packet.data(), std::min(space, (size_t) _packet.size()));
+      _writtenLength += written;
+      _packet.erase(_packet.begin(), _packet.begin() + written);
+      space -= written;
+      if (_packet.size()) {
+        //  Couldn't queue the full cache
+        request->client()->send();
+        return written;
+      }
+      needs_send = true;
+    }
+
+    size_t outLen, readLen;
     if(_chunked){
       if(space <= 8){
-        return 0;
+        goto content_abort;
       }
       outLen = space;
     } else if(!_sendContentLength){
       outLen = space;
     } else {
-      outLen = ((_contentLength - _sentLength) > space)?space:(_contentLength - _sentLength);
+      outLen = std::min(space, _contentLength - _sentLength);
     }
-
-    uint8_t *buf = (uint8_t *)malloc(outLen+headLen);
-    if (!buf) {
-      // os_printf("_ack malloc %d failed\n", outLen+headLen);
-      return 0;
+#ifdef ESP8266
+    // Limit outlen based on available memory
+    // We require two packet buffers - one allocated here, and one belonging to the TCP stack
+    {      
+      auto old_space = _packet.capacity();
+      auto max_block_size = ESP.getMaxFreeBlockSize() - 128;
+      if ((old_space < outLen) || (outLen > max_block_size)) {
+        Serial.printf_P(PSTR("Space adjustment, have %d, want %d, avail %d\n"), old_space, outLen, max_block_size);
+        do { 
+          dealloc_vector(_packet);
+          Serial.printf_P(PSTR("Released buffer - capacity %d\n"), _packet.capacity());
+          outLen = std::min(outLen, max_block_size);
+          _packet.resize(outLen);
+          max_block_size = ESP.getMaxFreeBlockSize() - 128;
+          Serial.printf_P(PSTR("Checking %d vs %d\n"), outLen, max_block_size);
+        } while (max_block_size < outLen);
+      } else {
+        _packet.resize(outLen);
+      }
     }
-
-    if(headLen){
-      memcpy(buf, _head.c_str(), _head.length());
-    }
-
-    size_t readLen = 0;
-
-    if(_chunked){
+#else
+  _packet.resize(outLen);
+#endif
+    
+    if(_chunked){      
       // HTTP 1.1 allows leading zeros in chunk length. Or spaces may be added.
       // See RFC2616 sections 2, 3.6.1.
-      readLen = _fillBufferAndProcessTemplates(buf+headLen+6, outLen - 8);
+      readLen = _fillBufferAndProcessTemplates(_packet.data() + 6, outLen - 8);
       if(readLen == RESPONSE_TRY_AGAIN){
-          free(buf);
-          return 0;
+          _packet.clear();
+          goto content_abort;
       }
-      outLen = sprintf((char*)buf+headLen, "%x", readLen) + headLen;
-      while(outLen < headLen + 4) buf[outLen++] = ' ';
-      buf[outLen++] = '\r';
-      buf[outLen++] = '\n';
+      outLen = sprintf((char*)_packet.data(), "%x", readLen);
+      while(outLen < 4) _packet[outLen++] = ' ';
+      _packet[outLen++] = '\r';
+      _packet[outLen++] = '\n';
       outLen += readLen;
-      buf[outLen++] = '\r';
-      buf[outLen++] = '\n';
+      _packet[outLen++] = '\r';
+      _packet[outLen++] = '\n';
+      
     } else {
-      readLen = _fillBufferAndProcessTemplates(buf+headLen, outLen);
+      readLen = _fillBufferAndProcessTemplates(_packet.data(), _packet.size());
       if(readLen == RESPONSE_TRY_AGAIN){
-          free(buf);
-          return 0;
+          _packet.clear();
+          goto content_abort;
       }
-      outLen = readLen + headLen;
+      outLen = readLen;
+    }
+    _packet.resize(outLen);
+
+    if(_packet.size()){      
+        auto acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size());
+        _writtenLength += acceptedLen;
+        _packet.erase(_packet.begin(), _packet.begin() + acceptedLen); // TODO - does this realloc??        
+        if (acceptedLen < outLen) {
+          // Save the unsent block in cache
+          Serial.print(F("Incomplete write, ")); Serial.print(acceptedLen); Serial.print("/"); Serial.println(outLen);
+          Serial.print(F("Heap: ")); Serial.print(ESP.getMaxFreeBlockSize()); Serial.print("/"); Serial.println(ESP.getFreeHeap()); 
+          Serial.println(request->client()->space());
+          // Try again, with less
+          acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size()/2);
+          _writtenLength += acceptedLen;
+          _packet.erase(_packet.begin(), _packet.begin() + acceptedLen); // TODO - does this realloc??                  
+          Serial.println(acceptedLen);
+        }
     }
 
-    if(headLen){
-        _head = String();
-    }
-
-    if(outLen){
-        _writtenLength += request->client()->write((const char*)buf, outLen);
-    }
-
-    if(_chunked){
-        _sentLength += readLen;
-    } else {
-        _sentLength += outLen - headLen;
-    }
-
-    free(buf);
-
-    if((_chunked && readLen == 0) || (!_sendContentLength && outLen == 0) || (!_chunked && _sentLength == _contentLength)){
+    if( (_chunked && readLen == 0)  // Chunked mode, no more data
+        || (!_sendContentLength && outLen == 0) // No content length, no more data
+        || (!_chunked && _writtenLength == (_headLength + _contentLength))) // non chunked mode, all data written
+    {
       _state = RESPONSE_WAIT_ACK;
     }
     return outLen;
@@ -379,6 +420,12 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     }
   }
   return 0;
+
+content_abort:  
+  if (needs_send) {
+    request->client()->send();
+  }
+  return 0;  
 }
 
 size_t AsyncAbstractResponse::_readDataFromCacheOrContent(uint8_t* data, const size_t len)
@@ -390,15 +437,22 @@ size_t AsyncAbstractResponse::_readDataFromCacheOrContent(uint8_t* data, const s
       _cache.erase(_cache.begin(), _cache.begin() + readFromCache);
     }
     // If we need to read more...
-    const size_t needFromFile = len - readFromCache;
-    const size_t readFromContent = _fillBuffer(data + readFromCache, needFromFile);
-    return readFromCache + readFromContent;
+    if (len > readFromCache) {
+      const size_t needFromFile = len - readFromCache;
+      const size_t readFromContent = _fillBuffer(data + readFromCache, needFromFile);
+      if (readFromContent != RESPONSE_TRY_AGAIN) {
+        _sentLength += readFromContent;
+        return readFromCache + readFromContent;
+      }
+      if (readFromCache == 0) return readFromContent;
+    } 
+    return readFromCache;
 }
 
 size_t AsyncAbstractResponse::_fillBufferAndProcessTemplates(uint8_t* data, size_t len)
 {
   if(!_callback)
-    return _fillBuffer(data, len);
+    return _readDataFromCacheOrContent(data, len);
 
   const size_t originalLen = len;
   len = _readDataFromCacheOrContent(data, len);
