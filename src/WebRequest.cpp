@@ -32,6 +32,15 @@ static const String SharedEmptyString = String();
 
 enum { PARSE_REQ_START, PARSE_REQ_HEADERS, PARSE_REQ_BODY, PARSE_REQ_END, PARSE_REQ_FAIL };
 
+
+namespace {
+  template<typename T>
+  static void DEBUG_PRINT(const __FlashStringHelper* str, T arg) {
+    Serial.print(str); Serial.print(arg); Serial.print(F(", heap ")); Serial.println(ESP.getFreeHeap());
+  }
+};
+
+
 AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer* s, AsyncClient* c)
   : _client(c)
   , _server(s)
@@ -69,6 +78,7 @@ AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer* s, AsyncClient* c)
   , _itemIsFile(false)
   , _tempObject(NULL)
 {
+  DEBUG_PRINT(F("WR created "), (intptr_t)this);
   c->onError([](void *r, AsyncClient* c, int8_t error){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onError(error); }, this);
   c->onAck([](void *r, AsyncClient* c, size_t len, uint32_t time){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onAck(len, time); }, this);
   c->onDisconnect([](void *r, AsyncClient* c){ AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onDisconnect(); delete c; }, this);
@@ -78,6 +88,8 @@ AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer* s, AsyncClient* c)
 }
 
 AsyncWebServerRequest::~AsyncWebServerRequest(){
+  DEBUG_PRINT(F("WR destructing "), (intptr_t)this);
+
   _headers.free();
 
   _params.free();
@@ -96,6 +108,8 @@ AsyncWebServerRequest::~AsyncWebServerRequest(){
   if(_tempFile){
     _tempFile.close();
   }
+  
+  DEBUG_PRINT(F("WR destructed "), (intptr_t)this);
 }
 
 void AsyncWebServerRequest::_onData(void *buf, size_t len){
@@ -569,6 +583,7 @@ void AsyncWebServerRequest::_parseLine(){
     if(!_temp.length()){
       //end of headers
       _server->_rewriteRequest(this);
+      DEBUG_PRINT(F("WR ready "), (intptr_t) this);
       _server->_attachHandler(this);
       _removeNotInterestingHeaders();
       if(_expectingContinue){
