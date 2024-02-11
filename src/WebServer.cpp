@@ -244,3 +244,16 @@ void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
   }
 
 }
+
+void AsyncWebServer::dumpStatus() {    
+    Serial.println(F("Web server status:"));
+    auto end = _requestQueue.end();
+    for(auto it = _requestQueue.begin(); it != end; ++it) {
+      Serial.printf_P(PSTR(" Request %d, state %d"), (intptr_t) *it, (*it)->_parseState);
+      if ((*it)->_response) {
+        auto r = (*it)->_response;
+        Serial.printf_P(PSTR(" -- Response %d, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
+      }
+      Serial.println();
+    }
+}
