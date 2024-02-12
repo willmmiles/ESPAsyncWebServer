@@ -58,11 +58,11 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelReq
         || (ESP.getFreeHeap() < ASYNCWEBSERVER_MINIMUM_HEAP))
     {
       // Don't even allocate anything we can avoid.  Tell the client we're in trouble with a static response.
+      c->onAck([](void *, AsyncClient* c, size_t , uint32_t ){  c->close(); });
       const static char msg_progmem[] PROGMEM = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
       char msg_stack[sizeof(msg_progmem)];  // stack, so we can pull it out of flash memory
       memcpy_P(msg_stack, msg_progmem, sizeof(msg_stack));
       c->write(msg_stack, sizeof(msg_stack));
-      c->close();
       return;
     }
     
