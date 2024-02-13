@@ -22,6 +22,12 @@
 #include "WebResponseImpl.h"
 #include "cbuf.h"
 
+#ifdef ASYNCWEBSERVER_DEBUG_TRACE
+#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]" fmt), millis(), ##__VA_ARGS__)
+#else
+#define DEBUG_PRINTFP(...)
+#endif
+
 // Since ESP8266 does not link memchr by default, here's its implementation.
 void* memchr(void* ptr, int ch, size_t count)
 {
@@ -285,6 +291,7 @@ static void dealloc_vector(T& vec) {
 
 size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
   (void)time;
+  DEBUG_PRINTFP("(%d) ack %d\n", (intptr_t) this, len);
 
   if(!_sourceValid()){
     _state = RESPONSE_FAILED;
@@ -344,14 +351,13 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
       auto old_space = _packet.capacity();
       auto max_block_size = ESP.getMaxFreeBlockSize() - 128;
       if ((old_space < outLen) || (outLen > max_block_size)) {
-        Serial.printf_P(PSTR("Space adjustment, have %d, want %d, avail %d\n"), old_space, outLen, max_block_size);
+        DEBUG_PRINTFP("(%d) Space adjustment, have %d, want %d, avail %d\n", (intptr_t)this, old_space, outLen, max_block_size);
         do { 
           dealloc_vector(_packet);
-          Serial.printf_P(PSTR("Released buffer - capacity %d\n"), _packet.capacity());
           outLen = std::min(outLen, max_block_size);
           _packet.resize(outLen);
           max_block_size = ESP.getMaxFreeBlockSize() - 128;
-          Serial.printf_P(PSTR("Checking %d vs %d\n"), outLen, max_block_size);
+          DEBUG_PRINTFP("(%d) Checking %d vs %d\n", (intptr_t)this, outLen, max_block_size);
         } while (max_block_size < outLen);
       } else {
         _packet.resize(outLen);
@@ -390,18 +396,16 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     if(_packet.size()){      
         auto acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size());
         _writtenLength += acceptedLen;
-        _packet.erase(_packet.begin(), _packet.begin() + acceptedLen); // TODO - does this realloc??        
+        _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
         if (acceptedLen < outLen) {
           // Save the unsent block in cache
-          Serial.print(F("Incomplete write, ")); Serial.print(acceptedLen); Serial.print("/"); Serial.println(outLen);
-          Serial.print(F("Heap: ")); Serial.print(ESP.getMaxFreeBlockSize()); Serial.print("/"); Serial.println(ESP.getFreeHeap()); 
-          Serial.println(request->client()->space());
+          DEBUG_PRINTFP("(%d) Incomplete write, %d/%d\nHeap: %d/%d\nSpace:%d\n", (intptr_t) this, acceptedLen, outLen, ESP.getMaxFreeBlockSize(), ESP.getFreeHeap(), request->client()->space());
           // Try again, with less
           acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size()/2);
           _writtenLength += acceptedLen;
-          _packet.erase(_packet.begin(), _packet.begin() + acceptedLen); // TODO - does this realloc??                  
-          Serial.println(acceptedLen);
+          _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
         }
+        DEBUG_PRINTFP("(%d) Accepted: %d\n", (intptr_t) this, acceptedLen);
     }
 
     if( (_chunked && readLen == 0)  // Chunked mode, no more data
