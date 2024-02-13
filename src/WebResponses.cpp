@@ -406,6 +406,7 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
           _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
         }
         DEBUG_PRINTFP("(%d) Accepted: %d\n", (intptr_t) this, acceptedLen);
+        if (_packet.size() == 0) dealloc_vector(_packet);
     }
 
     if( (_chunked && readLen == 0)  // Chunked mode, no more data
