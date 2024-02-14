@@ -28,6 +28,12 @@
 #define DEBUG_PRINTFP(...)
 #endif
 
+#ifdef ESP8266
+#define GET_MAX_BLOCK_SIZE getMaxFreeBlockSize
+#else
+#define GET_MAX_BLOCK_SIZE getMaxAllocHeap
+#endif
+
 // Since ESP8266 does not link memchr by default, here's its implementation.
 void* memchr(void* ptr, int ch, size_t count)
 {
@@ -406,7 +412,7 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
         _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
         if (acceptedLen < outLen) {
           // Save the unsent block in cache
-          DEBUG_PRINTFP("(%d) Incomplete write, %d/%d\nHeap: %d/%d\nSpace:%d\n", (intptr_t) this, acceptedLen, outLen, ESP.getMaxFreeBlockSize(), ESP.getFreeHeap(), request->client()->space());
+          DEBUG_PRINTFP("(%d) Incomplete write, %d/%d\nHeap: %d/%d\nSpace:%d\n", (intptr_t) this, acceptedLen, outLen, ESP.GET_MAX_BLOCK_SIZE(), ESP.getFreeHeap(), request->client()->space());
           // Try again, with less
           acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size()/2);
           _writtenLength += acceptedLen;
