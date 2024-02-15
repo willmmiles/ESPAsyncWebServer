@@ -721,7 +721,6 @@ void AsyncWebSocketClient::_onData(void *pbuf, size_t plen){
     }
 
     const size_t datalen = std::min((size_t)(_pinfo.len - _pinfo.index), plen);
-    const auto datalast = data[datalen];
 
     if(_pinfo.masked){
       for(size_t i=0;i<datalen;i++)
@@ -771,10 +770,6 @@ void AsyncWebSocketClient::_onData(void *pbuf, size_t plen){
       //what should we do?
       break;
     }
-
-    // restore byte as _handleEvent may have added a null terminator i.e., data[len] = 0;
-    if (datalen > 0)
-      data[datalen] = datalast;
 
     data += datalen;
     plen -= datalen;
