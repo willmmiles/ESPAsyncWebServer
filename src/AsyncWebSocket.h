@@ -21,6 +21,7 @@
 #ifndef ASYNCWEBSOCKET_H_
 #define ASYNCWEBSOCKET_H_
 
+#include <memory>
 #include <Arduino.h>
 #ifdef ESP32
 #include <AsyncTCP.h>
@@ -37,7 +38,7 @@
 #endif
 #include <ESPAsyncWebServer.h>
 
-#include "AsyncWebSynchronization.h"
+#include "DynamicBuffer.h"
 
 #ifdef ESP8266
 #include <Hash.h>
@@ -88,33 +89,36 @@ typedef enum { WS_CONTINUATION, WS_TEXT, WS_BINARY, WS_DISCONNECT = 0x08, WS_PIN
 typedef enum { WS_MSG_SENDING, WS_MSG_SENT, WS_MSG_ERROR } AwsMessageStatus;
 typedef enum { WS_EVT_CONNECT, WS_EVT_DISCONNECT, WS_EVT_PONG, WS_EVT_ERROR, WS_EVT_DATA } AwsEventType;
 
+typedef SharedBuffer AsyncWebSocketSharedBuffer;
+
+// API compatibility class - use AsyncWebSocketSharedBuffer directly
 class AsyncWebSocketMessageBuffer {
   private:
-    uint8_t * _data;
-    size_t _len;
-    bool _lock; 
-    uint32_t _count;  
+    AsyncWebSocketSharedBuffer _buf;
 
   public:
-    AsyncWebSocketMessageBuffer();
-    AsyncWebSocketMessageBuffer(size_t size);
-    AsyncWebSocketMessageBuffer(uint8_t * data, size_t size); 
-    AsyncWebSocketMessageBuffer(const AsyncWebSocketMessageBuffer &); 
-    AsyncWebSocketMessageBuffer(AsyncWebSocketMessageBuffer &&); 
-    ~AsyncWebSocketMessageBuffer(); 
-    void operator ++(int i) { (void)i; _count++; }
-    void operator --(int i) { (void)i; if (_count > 0) { _count--; } ;  }
+    AsyncWebSocketMessageBuffer() {};
+    AsyncWebSocketMessageBuffer(size_t size) : _buf(size) {};
+    AsyncWebSocketMessageBuffer(uint8_t * data, size_t size)  : _buf(reinterpret_cast<char*>(data), size) {};
+    AsyncWebSocketMessageBuffer(const AsyncWebSocketMessageBuffer &r) { if (r._buf) _buf = SharedBuffer(r._buf.copy()); }
+    AsyncWebSocketMessageBuffer(AsyncWebSocketMessageBuffer &&) = default;
+    AsyncWebSocketMessageBuffer(AsyncWebSocketSharedBuffer b) : _buf(std::move(b)) {};
+    ~AsyncWebSocketMessageBuffer() {};
+
+    void operator ++(int i) {};
+    void operator --(int i) {};
     bool reserve(size_t size);
-    void lock() { _lock = true; }
-    void unlock() { _lock = false; }
-    uint8_t * get() { return _data; }
-    size_t length() { return _len; }
-    uint32_t count() { return _count; }
-    bool canDelete() { return (!_count && !_lock); } 
+    void lock() {};
+    void unlock() {};
+    uint8_t * get() { return reinterpret_cast<uint8_t*>(_buf.data()); }
+    size_t length() { return _buf.size(); }
+    uint32_t count() { return 1; }
+    bool canDelete() { return true; } 
 
     friend AsyncWebSocket; 
-
+    friend AsyncWebSocketClient;
 };
+
 
 class AsyncWebSocketMessage {
   protected:
@@ -148,18 +152,18 @@ public:
 
 class AsyncWebSocketMultiMessage: public AsyncWebSocketMessage {
   private:
-    uint8_t * _data;
-    size_t _len;
     size_t _sent;
     size_t _ack;
     size_t _acked;
-    AsyncWebSocketMessageBuffer * _WSbuffer; 
+    AsyncWebSocketSharedBuffer _WSbuffer; 
 public:
-    AsyncWebSocketMultiMessage(AsyncWebSocketMessageBuffer * buffer, uint8_t opcode=WS_TEXT, bool mask=false); 
+    AsyncWebSocketMultiMessage(AsyncWebSocketSharedBuffer buffer, uint8_t opcode=WS_TEXT, bool mask=false); 
     virtual ~AsyncWebSocketMultiMessage() override;
     virtual bool betweenFrames() const override { return _acked == _ack; }
     virtual void ack(size_t len, uint32_t time) override ;
     virtual size_t send(AsyncClient *client) override ;
+    
+    AsyncWebSocketMultiMessage* clone() const;  // Returns this message with a copy of the data buffer if required.
 };
 
 class AsyncWebSocketClient {
@@ -227,7 +231,8 @@ class AsyncWebSocketClient {
     void text(char * message);
     void text(const String &message);
     void text(const __FlashStringHelper *data);
-    void text(AsyncWebSocketMessageBuffer *buffer); 
+    void text(AsyncWebSocketSharedBuffer buffer); 
+    void text(AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer 
 
     void binary(const char * message, size_t len);
     void binary(const char * message);
@@ -235,7 +240,8 @@ class AsyncWebSocketClient {
     void binary(char * message);
     void binary(const String &message);
     void binary(const __FlashStringHelper *data, size_t len);
-    void binary(AsyncWebSocketMessageBuffer *buffer); 
+    void binary(AsyncWebSocketSharedBuffer buffer); 
+    void binary(AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer 
 
     bool canSend() { return _messageQueue.length() < WS_MAX_QUEUED_MESSAGES; }
 
@@ -260,7 +266,6 @@ class AsyncWebSocket: public AsyncWebHandler {
     uint32_t _cNextId;
     AwsEventHandler _eventHandler;
     bool _enabled;
-    AsyncWebLock _lock;
 
   public:
     AsyncWebSocket(const String& url);
@@ -295,7 +300,8 @@ class AsyncWebSocket: public AsyncWebHandler {
     void textAll(char * message);
     void textAll(const String &message);
     void textAll(const __FlashStringHelper *message); //  need to convert
-    void textAll(AsyncWebSocketMessageBuffer * buffer); 
+    void textAll(const AsyncWebSocketSharedBuffer& buffer); 
+    void textAll(const AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer
 
     void binary(uint32_t id, const char * message, size_t len);
     void binary(uint32_t id, const char * message);
@@ -310,10 +316,11 @@ class AsyncWebSocket: public AsyncWebHandler {
     void binaryAll(char * message);
     void binaryAll(const String &message);
     void binaryAll(const __FlashStringHelper *message, size_t len);
-    void binaryAll(AsyncWebSocketMessageBuffer * buffer); 
+    void binaryAll(const AsyncWebSocketSharedBuffer& buffer); 
+    void binaryAll(const AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer
 
     void message(uint32_t id, AsyncWebSocketMessage *message);
-    void messageAll(AsyncWebSocketMultiMessage *message);
+    void messageAll(const AsyncWebSocketMultiMessage &message);
 
     size_t printf(uint32_t id, const char *format, ...)  __attribute__ ((format (printf, 3, 4)));
     size_t printfAll(const char *format, ...)  __attribute__ ((format (printf, 2, 3)));
@@ -336,11 +343,11 @@ class AsyncWebSocket: public AsyncWebHandler {
     virtual void handleRequest(AsyncWebServerRequest *request) override final;
 
 
-    //  messagebuffer functions/objects. 
-    AsyncWebSocketMessageBuffer * makeBuffer(size_t size = 0); 
-    AsyncWebSocketMessageBuffer * makeBuffer(uint8_t * data, size_t size); 
-    LinkedList<AsyncWebSocketMessageBuffer *> _buffers;
-    void _cleanBuffers(); 
+    // Legacy message buffer factories
+    // Instead, allocate the object directly with make_shared<>
+    AsyncWebSocketMessageBuffer* makeBuffer(size_t size = 0) __attribute__((deprecated)); 
+    AsyncWebSocketMessageBuffer* makeBuffer(const uint8_t * data, size_t size)  __attribute__((deprecated));
+    void _cleanBuffers() {};
 
     AsyncWebSocketClientLinkedList getClients() const;
 };
