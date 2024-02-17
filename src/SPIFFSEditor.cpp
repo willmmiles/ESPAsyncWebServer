@@ -285,7 +285,7 @@ SPIFFSEditor::SPIFFSEditor(const String& username, const String& password, const
 {}
 
 bool SPIFFSEditor::canHandle(AsyncWebServerRequest *request){
-  if(request->url().equalsIgnoreCase("/edit")){
+  if(request->url().equalsIgnoreCase(F("/edit"))){
     if(request->method() == HTTP_GET){
       if(request->hasParam("list"))
         return true;
@@ -302,9 +302,9 @@ bool SPIFFSEditor::canHandle(AsyncWebServerRequest *request){
         }
 #endif
       }
-      if(request->hasParam("download")){
-        if (request->arg("download").indexOf("wsec") > -1) return false; //make sure wsec.json is not served
-        request->_tempFile = _fs.open(request->arg("download"), "r");
+      if(request->hasParam(F("download"))){
+        if (request->arg(F("download")).indexOf("wsec") > -1) return false; //make sure wsec.json is not served
+        request->_tempFile = _fs.open(request->arg(F("download")), "r");
         if(!request->_tempFile){
           return false;
         }
@@ -315,7 +315,7 @@ bool SPIFFSEditor::canHandle(AsyncWebServerRequest *request){
         }
 #endif
       }
-      request->addInterestingHeader("If-Modified-Since");
+      request->addInterestingHeader(F("If-Modified-Since"));
       return true;
     }
     else if(request->method() == HTTP_POST)
@@ -354,10 +354,10 @@ void SPIFFSEditor::handleRequest(AsyncWebServerRequest *request){
         String fname = entry.name();
         if (fname.indexOf("wsec") == -1) {
           if (output != "[") output += ',';
-          output += "{\"type\":\"file\",\"name\":\"";
+          output += F("{\"type\":\"file\",\"name\":\"");
           if (fname[0] != '/') output += '/';
           output += fname;
-          output += "\",\"size\":";
+          output += F("\",\"size\":");
           output += String(entry.size());
           output += '}';
         }
@@ -371,20 +371,20 @@ void SPIFFSEditor::handleRequest(AsyncWebServerRequest *request){
       dir.close();
 #endif
       output += ']';
-      request->send(200, "application/json", output);
+      request->send(200, FPSTR(CONTENT_TYPE_JSON), output);
       output = String();
     }
-    else if(request->hasParam("edit") || request->hasParam("download")){
-      request->send(request->_tempFile, request->_tempFile.name(), String(), request->hasParam("download"));
+    else if(request->hasParam("edit") || request->hasParam(F("download"))){
+      request->send(request->_tempFile, request->_tempFile.name(), String(), request->hasParam(F("download")));
     }
     else {
       const char * buildTime = __DATE__ " " __TIME__ " GMT";
-      if (request->header("If-Modified-Since").equals(buildTime)) {
+      if (request->header(F("If-Modified-Since")).equals(buildTime)) {
         request->send(304);
       } else {
-        AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", edit_htm_gz, edit_htm_gz_len);
-        response->addHeader("Content-Encoding", "gzip");
-        response->addHeader("Last-Modified", buildTime);
+        AsyncWebServerResponse *response = request->beginResponse_P(200, FPSTR(CONTENT_TYPE_HTML), edit_htm_gz, edit_htm_gz_len);
+        response->addHeader(F("Content-Encoding"), F("gzip"));
+        response->addHeader(F("Last-Modified"), buildTime);
         request->send(response);
       }
     }
