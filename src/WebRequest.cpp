@@ -156,7 +156,7 @@ void AsyncWebServerRequest::_onData(void *buf, size_t len){
       if(_parsedLength == 0){
         if(_contentType.startsWith("application/x-www-form-urlencoded")){
           _isPlainPost = true;
-        } else if(_contentType == "text/plain" && __is_param_char(((char*)buf)[0])){
+        } else if(_contentType == FPSTR(CONTENT_TYPE_PLAIN) && __is_param_char(((char*)buf)[0])){
           size_t i = 0;
           while (i<len && __is_param_char(((char*)buf)[i++]));
           if(i < len && ((char*)buf)[i-1] == '='){

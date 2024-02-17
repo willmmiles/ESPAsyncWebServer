@@ -209,9 +209,9 @@ AsyncBasicResponse::AsyncBasicResponse(int code, String contentType, String cont
   if(_content.length()){
     _contentLength = _content.length();
     if(!_contentType.length())
-      _contentType = "text/plain";
+      _contentType = FPSTR(CONTENT_TYPE_PLAIN);
   }
-  addHeader("Connection","close");
+  addHeader(F("Connection"),F("close"));
 }
 
 void AsyncBasicResponse::_respond(AsyncWebServerRequest *request){
@@ -571,34 +571,13 @@ AsyncFileResponse::~AsyncFileResponse(){
     _content.close();
 }
 
-const static char GZIP_EXTENSION_PMEM[] PROGMEM = ".gz";
-const static auto GZIP_EXTENSION = FPSTR(GZIP_EXTENSION_PMEM);
-
 void AsyncFileResponse::_setContentType(const String& path){
-  if (path.endsWith(F(".html"))) _contentType = F("text/html");
-  else if (path.endsWith(F(".htm"))) _contentType = F("text/html");
-  else if (path.endsWith(F(".css"))) _contentType = F("text/css");
-  else if (path.endsWith(F(".json"))) _contentType = F("application/json");
-  else if (path.endsWith(F(".js"))) _contentType = F("application/javascript");
-  else if (path.endsWith(F(".png"))) _contentType = F("image/png");
-  else if (path.endsWith(F(".gif"))) _contentType = F("image/gif");
-  else if (path.endsWith(F(".jpg"))) _contentType = F("image/jpeg");
-  else if (path.endsWith(F(".ico"))) _contentType = F("image/x-icon");
-  else if (path.endsWith(F(".svg"))) _contentType = F("image/svg+xml");
-  else if (path.endsWith(F(".eot"))) _contentType = F("font/eot");
-  else if (path.endsWith(F(".woff"))) _contentType = F("font/woff");
-  else if (path.endsWith(F(".woff2"))) _contentType = F("font/woff2");
-  else if (path.endsWith(F(".ttf"))) _contentType = F("font/ttf");
-  else if (path.endsWith(F(".xml"))) _contentType = F("text/xml");
-  else if (path.endsWith(F(".pdf"))) _contentType = F("application/pdf");
-  else if (path.endsWith(F(".zip"))) _contentType = F("application/zip");
-  else if(path.endsWith(GZIP_EXTENSION)) _contentType = F("application/x-gzip");
-  else _contentType = F("text/plain");
+  _contentType = contentTypeFor(path);
 }
 
 static File fs_open_zipped(FS& fs, const String& path, bool force_absolute) {
   if (!force_absolute && !fs.exists(path)) {
-    auto gz_path = path + GZIP_EXTENSION;
+    auto gz_path = path + "." + FPSTR(GZIP_EXTENSION);
     if (fs.exists(gz_path)) return fs.open(gz_path, "r");
   }
   return fs.open(path, "r");
@@ -611,7 +590,7 @@ AsyncFileResponse::AsyncFileResponse(File content, const String& path, const Str
   _code = 200;
   _path = path;
 
-  if(!download && String(content.name()).endsWith(GZIP_EXTENSION) && !path.endsWith(GZIP_EXTENSION)){
+  if(!download && String(content.name()).endsWith(FPSTR(GZIP_EXTENSION)) && !path.endsWith(FPSTR(GZIP_EXTENSION))){
     addHeader(F("Content-Encoding"), F("gzip"));
     _callback = nullptr; // Unable to process gzipped templates
     _sendContentLength = true;
