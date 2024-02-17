@@ -1223,14 +1223,14 @@ void AsyncWebSocket::binaryAll(const __FlashStringHelper *message, size_t len){
   }
  }
 
-const char * WS_STR_CONNECTION = "Connection";
-const char * WS_STR_UPGRADE = "Upgrade";
-const char * WS_STR_ORIGIN = "Origin";
-const char * WS_STR_VERSION = "Sec-WebSocket-Version";
-const char * WS_STR_KEY = "Sec-WebSocket-Key";
-const char * WS_STR_PROTOCOL = "Sec-WebSocket-Protocol";
-const char * WS_STR_ACCEPT = "Sec-WebSocket-Accept";
-const char * WS_STR_UUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const char WS_STR_CONNECTION[] PROGMEM = "Connection";
+const char WS_STR_UPGRADE[] PROGMEM = "Upgrade";
+const char WS_STR_ORIGIN[] PROGMEM = "Origin";
+const char WS_STR_VERSION[] PROGMEM = "Sec-WebSocket-Version";
+const char WS_STR_KEY[] PROGMEM = "Sec-WebSocket-Key";
+const char WS_STR_PROTOCOL[] PROGMEM = "Sec-WebSocket-Protocol";
+const char WS_STR_ACCEPT[] PROGMEM = "Sec-WebSocket-Accept";
+const char WS_STR_UUID[] PROGMEM = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 bool AsyncWebSocket::canHandle(AsyncWebServerRequest *request){
   if(!_enabled)
@@ -1239,36 +1239,36 @@ bool AsyncWebSocket::canHandle(AsyncWebServerRequest *request){
   if(request->method() != HTTP_GET || !request->url().equals(_url) || !request->isExpectedRequestedConnType(RCT_WS))
     return false;
 
-  request->addInterestingHeader(WS_STR_CONNECTION);
-  request->addInterestingHeader(WS_STR_UPGRADE);
-  request->addInterestingHeader(WS_STR_ORIGIN);
-  request->addInterestingHeader(WS_STR_VERSION);
-  request->addInterestingHeader(WS_STR_KEY);
-  request->addInterestingHeader(WS_STR_PROTOCOL);
+  request->addInterestingHeader(FPSTR(WS_STR_CONNECTION));
+  request->addInterestingHeader(FPSTR(WS_STR_UPGRADE));
+  request->addInterestingHeader(FPSTR(WS_STR_ORIGIN));
+  request->addInterestingHeader(FPSTR(WS_STR_VERSION));
+  request->addInterestingHeader(FPSTR(WS_STR_KEY));
+  request->addInterestingHeader(FPSTR(WS_STR_PROTOCOL));
   return true;
 }
 
 void AsyncWebSocket::handleRequest(AsyncWebServerRequest *request){
-  if(!request->hasHeader(WS_STR_VERSION) || !request->hasHeader(WS_STR_KEY)){
+  if(!request->hasHeader(FPSTR(WS_STR_VERSION)) || !request->hasHeader(FPSTR(WS_STR_KEY))){
     request->send(400);
     return;
   }
   if((_username != "" && _password != "") && !request->authenticate(_username.c_str(), _password.c_str())){
     return request->requestAuthentication();
   }
-  AsyncWebHeader* version = request->getHeader(WS_STR_VERSION);
+  AsyncWebHeader* version = request->getHeader(FPSTR(WS_STR_VERSION));
   if(version->value().toInt() != 13){
     AsyncWebServerResponse *response = request->beginResponse(400);
-    response->addHeader(WS_STR_VERSION,"13");
+    response->addHeader(FPSTR(WS_STR_VERSION),"13");
     request->send(response);
     return;
   }
-  AsyncWebHeader* key = request->getHeader(WS_STR_KEY);
+  AsyncWebHeader* key = request->getHeader(FPSTR(WS_STR_KEY));
   AsyncWebServerResponse *response = new AsyncWebSocketResponse(key->value(), this);
-  if(request->hasHeader(WS_STR_PROTOCOL)){
-    AsyncWebHeader* protocol = request->getHeader(WS_STR_PROTOCOL);
+  if(request->hasHeader(FPSTR(WS_STR_PROTOCOL))){
+    AsyncWebHeader* protocol = request->getHeader(FPSTR(WS_STR_PROTOCOL));
     //ToDo: check protocol
-    response->addHeader(WS_STR_PROTOCOL, protocol->value());
+    response->addHeader(FPSTR(WS_STR_PROTOCOL), protocol->value());
   }
   request->send(response);
 }
@@ -1324,9 +1324,9 @@ AsyncWebSocketResponse::AsyncWebSocketResponse(const String& key, AsyncWebSocket
   char buffer[33];
 
 #ifdef ESP8266
-  sha1(key + WS_STR_UUID, hash);
+  sha1(key + FPSTR(WS_STR_UUID), hash);
 #else
-  (String&)key += WS_STR_UUID;
+  (String&)key += FPSTR(WS_STR_UUID);
   mbedtls_sha1_context ctx;
   mbedtls_sha1_init(&ctx);
   mbedtls_sha1_starts_ret(&ctx);
@@ -1338,9 +1338,9 @@ AsyncWebSocketResponse::AsyncWebSocketResponse(const String& key, AsyncWebSocket
   base64_init_encodestate(&_state);
   int len = base64_encode_block((const char *) hash, 20, buffer, &_state);
   len = base64_encode_blockend((buffer + len), &_state);
-  addHeader(WS_STR_CONNECTION, WS_STR_UPGRADE);
-  addHeader(WS_STR_UPGRADE, "websocket");
-  addHeader(WS_STR_ACCEPT,buffer);
+  addHeader(FPSTR(WS_STR_CONNECTION), FPSTR(WS_STR_UPGRADE));
+  addHeader(FPSTR(WS_STR_UPGRADE), F("websocket"));
+  addHeader(FPSTR(WS_STR_ACCEPT),buffer);
 }
 
 void AsyncWebSocketResponse::_respond(AsyncWebServerRequest *request){
