@@ -48,7 +48,7 @@ class AsyncStaticWebHandler: public AsyncWebHandler {
     bool _gzipFirst;
     uint8_t _gzipStats;
   public:
-    AsyncStaticWebHandler(const char* uri, FS& fs, const char* path, const char* cache_control);
+    AsyncStaticWebHandler(String uri, FS& fs, String path, const char* cache_control);
     virtual bool canHandle(AsyncWebServerRequest *request) override final;
     virtual void handleRequest(AsyncWebServerRequest *request) override final;
     AsyncStaticWebHandler& setIsDir(bool isDir);
@@ -74,9 +74,9 @@ class AsyncCallbackWebHandler: public AsyncWebHandler {
     bool _isRegex;
   public:
     AsyncCallbackWebHandler() : _uri(), _method(HTTP_ANY), _onRequest(NULL), _onUpload(NULL), _onBody(NULL), _isRegex(false) {}
-    void setUri(const String& uri){ 
-      _uri = uri; 
-      _isRegex = uri.startsWith("^") && uri.endsWith("$");
+    void setUri(String uri){ 
+      _uri = std::move(uri); 
+      _isRegex = _uri.startsWith("^") && _uri.endsWith("$");
     }
     void setMethod(WebRequestMethodComposite method){ _method = method; }
     void onRequest(ArRequestHandlerFunction fn){ _onRequest = fn; }

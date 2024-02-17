@@ -21,8 +21,8 @@
 #include "ESPAsyncWebServer.h"
 #include "WebHandlerImpl.h"
 
-AsyncStaticWebHandler::AsyncStaticWebHandler(const char* uri, FS& fs, const char* path, const char* cache_control)
-  : _fs(fs), _uri(uri), _path(path), _default_file("index.htm"), _cache_control(cache_control), _last_modified(""), _callback(nullptr)
+AsyncStaticWebHandler::AsyncStaticWebHandler(String uri, FS& fs, String path, const char* cache_control)
+  : _fs(fs), _uri(std::move(uri)), _path(std::move(path)), _default_file("index.htm"), _cache_control(cache_control), _last_modified(""), _callback(nullptr)
 {
   // Ensure leading '/'
   if (_uri.length() == 0 || _uri[0] != '/') _uri = "/" + _uri;
