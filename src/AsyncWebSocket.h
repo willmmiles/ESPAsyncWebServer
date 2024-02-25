@@ -137,7 +137,8 @@ class AsyncWebSocketMessage {
 class AsyncWebSocketBasicMessage: public AsyncWebSocketMessage {
   private:
     size_t _len;
-    size_t _sent;
+    size_t _attempted;
+    size_t _sent;    
     size_t _ack;
     size_t _acked;
     uint8_t * _data;
@@ -152,6 +153,7 @@ public:
 
 class AsyncWebSocketMultiMessage: public AsyncWebSocketMessage {
   private:
+    size_t _attempted;
     size_t _sent;
     size_t _ack;
     size_t _acked;

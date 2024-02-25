@@ -31,43 +31,32 @@
 
 #define MAX_PRINTF_LEN 64
 
-size_t webSocketSendFrameWindow(AsyncClient *client){
+#define MAX_HEADER_SIZE 8
+
+// Return a guess at the maximum packet size we can send
+static size_t webSocketSendFrameWindow(AsyncClient *client){
   if(!client->canSend())
     return 0;
   size_t space = client->space();
-  if(space < 9)
+  if(space <= MAX_HEADER_SIZE)
     return 0;
-  return space - 8;
+  // TODO - consider if we have enough contiguous RAM to allocate  
+  return space - MAX_HEADER_SIZE;
 }
 
-size_t webSocketSendFrame(AsyncClient *client, bool final, uint8_t opcode, bool mask, uint8_t *data, size_t len){
+static size_t webSocketHeaderLength(bool mask, size_t len) {
+  return ((len < 126)?2:4) + (mask * 4);
+}
+
+static size_t webSocketSendFrameHeader(AsyncClient *client, bool final, uint8_t opcode, uint8_t mask_buf[4], size_t len){
   if(!client->canSend())
     return 0;
-  size_t space = client->space();
-  if(space < 2)
-    return 0;
-  uint8_t mbuf[4] = {0,0,0,0};
-  uint8_t headLen = 2;
-  if(len && mask){
-    headLen += 4;
-    mbuf[0] = rand() % 0xFF;
-    mbuf[1] = rand() % 0xFF;
-    mbuf[2] = rand() % 0xFF;
-    mbuf[3] = rand() % 0xFF;
-  }
-  if(len > 125)
-    headLen += 2;
-  if(space < headLen)
-    return 0;
-  space -= headLen;
 
-  if(len > space) len = space;
+  uint8_t buf[8];  // header buffer
+  uint8_t headLen = webSocketHeaderLength(mask_buf != nullptr, len);
 
-  uint8_t *buf = (uint8_t*)malloc(headLen);
-  if(buf == NULL){
-    //os_printf("could not malloc %u bytes for frame header\n", headLen);
+  if(client->space() < headLen)
     return 0;
-  }
 
   buf[0] = opcode & 0x0F;
   if(final)
@@ -79,33 +68,41 @@ size_t webSocketSendFrame(AsyncClient *client, bool final, uint8_t opcode, bool 
     buf[2] = (uint8_t)((len >> 8) & 0xFF);
     buf[3] = (uint8_t)(len & 0xFF);
   }
-  if(len && mask){
+  if(len && mask_buf){
     buf[1] |= 0x80;
-    memcpy(buf + (headLen - 4), mbuf, 4);
+
+    for (int i = 0; i < 4; ++i) {
+      buf[headLen-4+i] = mask_buf[i] = rand() % 0xFF;
+    }
   }
-  if(client->add((const char *)buf, headLen) != headLen){
+
+  size_t sent = client->add((const char *)buf, headLen);
+  if(sent != headLen){
     //os_printf("error adding %lu header bytes\n", headLen);
-    free(buf);
+    // we are in BIG trouble as we don't cache the headers...!
+    // TODO: might be better to close the connection here
+  }
+  return sent;
+}
+
+static size_t webSocketSendFrame(AsyncClient *client, bool final, uint8_t opcode, bool mask, uint8_t *data, size_t len){
+  uint8_t mbuf[4];
+  if (webSocketSendFrameHeader(client, final, opcode, mask ? mbuf : nullptr, len) == 0) {
     return 0;
   }
-  free(buf);
 
+  size_t added = 0;
   if(len){
+    // Apply the mask
     if(len && mask){
       size_t i;
       for(i=0;i<len;i++)
         data[i] = data[i] ^ mbuf[i%4];
-    }
-    if(client->add((const char *)data, len) != len){
-      //os_printf("error adding %lu data bytes\n", len);
-      return 0;
-    }
+    }    
+    added = client->add((const char *)data, len);
   }
-  if(!client->send()){
-    //os_printf("error sending frame: %lu\n", headLen+len);
-    return 0;
-  }
-  return len;
+  client->send();
+  return added;
 }
 
 
@@ -159,6 +156,7 @@ class AsyncWebSocketControl {
 
 AsyncWebSocketBasicMessage::AsyncWebSocketBasicMessage(const char * data, size_t len, uint8_t opcode, bool mask)
   :_len(len)
+  ,_attempted(0)
   ,_sent(0)
   ,_ack(0)
   ,_acked(0)
@@ -177,6 +175,7 @@ AsyncWebSocketBasicMessage::AsyncWebSocketBasicMessage(const char * data, size_t
 }
 AsyncWebSocketBasicMessage::AsyncWebSocketBasicMessage(uint8_t opcode, bool mask)
   :_len(0)
+  ,_attempted(0)
   ,_sent(0)
   ,_ack(0)
   ,_acked(0)
@@ -215,6 +214,13 @@ AsyncWebSocketBasicMessage::~AsyncWebSocketBasicMessage() {
       _status = WS_MSG_ERROR;
       return 0;
   }
+  if (_sent < _attempted) {
+    // Frame was truncated
+    size_t sent = client->write((const char*)(_data + _sent), _attempted - _sent);
+    _ack += sent;
+    _sent += sent;
+    return sent;
+  }
 
   size_t toSend = _len - _sent;
   size_t window = webSocketSendFrameWindow(client);
@@ -223,8 +229,9 @@ AsyncWebSocketBasicMessage::~AsyncWebSocketBasicMessage() {
       toSend = window;
   }
 
+  _attempted += toSend;
   _sent += toSend;
-  _ack += toSend + ((toSend < 126)?2:4) + (_mask * 4);
+  _ack += toSend + webSocketHeaderLength(_mask, toSend);
 
   bool final = (_sent == _len);
   uint8_t* dPtr = (uint8_t*)(_data + (_sent - toSend));
@@ -233,8 +240,9 @@ AsyncWebSocketBasicMessage::~AsyncWebSocketBasicMessage() {
   size_t sent = webSocketSendFrame(client, final, opCode, _mask, dPtr, toSend);
   _status = WS_MSG_SENDING;
   if(toSend && sent != toSend){
-      _sent -= (toSend - sent);
+      _attempted -= (toSend - sent);
       _ack -= (toSend - sent);
+      // TODO - what if header never sent
   }
   return sent;
 }
@@ -259,7 +267,8 @@ AsyncWebSocketBasicMessage::~AsyncWebSocketBasicMessage() {
 
 
 AsyncWebSocketMultiMessage::AsyncWebSocketMultiMessage(AsyncWebSocketSharedBuffer buffer, uint8_t opcode, bool mask)
-  :_sent(0)
+  :_attempted(0)
+  ,_sent(0)
   ,_ack(0)
   ,_acked(0)
   ,_WSbuffer(std::move(buffer))
@@ -302,6 +311,13 @@ AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
       //ets_printf("E: %u > %u\n", _sent, _len);
       return 0;
   }
+  if (_sent < _attempted) {
+    // Frame was truncated
+    size_t sent = client->write(_WSbuffer.data() + _sent, _attempted - _sent);
+    _ack += sent;
+    _sent += sent;
+    return sent;
+  }  
 
   size_t toSend = _WSbuffer.size() - _sent;
   size_t window = webSocketSendFrameWindow(client);
@@ -310,8 +326,9 @@ AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
       toSend = window;
   }
 
+  _attempted += toSend;
   _sent += toSend;
-  _ack += toSend + ((toSend < 126)?2:4) + (_mask * 4);
+  _ack += toSend + webSocketHeaderLength(_mask, toSend);
 
   //ets_printf("W: %u %u\n", _sent - toSend, toSend);
 
@@ -325,6 +342,7 @@ AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
       //ets_printf("E: %u != %u\n", toSend, sent);
       _sent -= (toSend - sent);
       _ack -= (toSend - sent);
+      // TODO - what if header never sent
   }
   //ets_printf("S: %u %u\n", _sent, sent);
   return sent;
