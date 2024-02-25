@@ -29,8 +29,13 @@
 #include <Hash.h>
 #endif
 
-#define MAX_PRINTF_LEN 64
+#ifdef ASYNCWEBSERVER_DEBUG_TRACE
+#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]{%d}" fmt "\n"), millis(), ESP.getFreeHeap(), ##__VA_ARGS__)
+#else
+#define DEBUG_PRINTFP(...)
+#endif
 
+#define MAX_PRINTF_LEN 64
 #define MAX_HEADER_SIZE 8
 
 // Return a guess at the maximum packet size we can send
@@ -200,6 +205,7 @@ AsyncWebSocketBasicMessage::~AsyncWebSocketBasicMessage() {
   }
 }
  size_t AsyncWebSocketBasicMessage::send(AsyncClient *client)  {
+  DEBUG_PRINTFP("BasicMessage %d - %d (%d/%d/%d - %d/%d)", (intptr_t) this, _status, _sent, _attempted, _len, _acked, _ack);
   if(_status != WS_MSG_SENDING)
     return 0;
   if(_acked < _ack){
@@ -297,6 +303,7 @@ AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
   //ets_printf("A: %u\n", len);
 }
  size_t AsyncWebSocketMultiMessage::send(AsyncClient *client)  {
+  DEBUG_PRINTFP("MultiMessage %d - %d (%d/%d/%d - %d/%d)", (intptr_t) this, _status, _sent, _attempted, _WSbuffer.size(), _acked, _ack);
   if(_status != WS_MSG_SENDING)
     return 0;
   if(_acked < _ack){
