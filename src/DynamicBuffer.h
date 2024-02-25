@@ -131,6 +131,9 @@ class BufferListPrint : public Print {
     size_t write(uint8_t c) {
       return this->write(&c, 1);
     }
+
+    bool valid() const { return _valid; };
+    explicit operator bool() const { return valid(); };
 };
 
 typedef BufferListPrint<DynamicBufferList> DynamicBufferListPrint;
