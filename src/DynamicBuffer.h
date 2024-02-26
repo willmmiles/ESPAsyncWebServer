@@ -39,9 +39,11 @@ class DynamicBuffer {
 
   explicit operator bool() const { return (_data != nullptr) && (_len > 0); }
 
+  // Release the buffer without freeing it
+  char* release() { char* temp = _data; _data = nullptr; _len = 0; return temp; }
+
   // TODO, if it ever matters - resizing
 };
-
 
 // Same interface as DynamicBuffer, but with shared_ptr semantics: buffer is held until last copy releases it.
 class SharedBuffer {
@@ -64,6 +66,9 @@ class SharedBuffer {
   explicit operator bool() const { return _buf && *_buf; };
   DynamicBuffer copy() const { return *_buf; }; // Make a copy of the buffer
 };
+
+// Utility functions
+String toString(DynamicBuffer buf);   // Move a buffer in to a string.  Buffer will be moved if buf is an rvalue, copied otherwise.
 
 
 // DynamicBufferList - an RAII list of DynamicBuffers
