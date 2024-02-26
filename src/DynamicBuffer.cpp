@@ -2,27 +2,40 @@
 #include <numeric>
 
 // Helper class - lets us move the buffer out of a String
-class ReleasableString : public String {
-  public:
-  // Inherit constructors
-  using String::String;
-  ReleasableString(String&& s) : String(std::move(s)) {};
+namespace {
+  class DynamicBufferString : public String {
+    public:
+    // Inherit constructors
+    using String::String;
+    DynamicBufferString(String&& s) : String(std::move(s)) {};
+    DynamicBufferString(DynamicBuffer&& d) : String() {
+      setSSO(false);
+      setCapacity(d.size() - 1);
+      setBuffer(d.release());
+      setLen(strlen(ptr.buff));
+    }
 
-  // Special feature: releease the buffer to the caller without deallocating
-  char* release() {
-    if (isSSO()) return nullptr;
-    auto result = wbuffer();
-    init();
-    return result;
-  }
-};
+    // Special feature: releease the buffer to the caller without deallocating
+    char* release() {
+      if (isSSO()) return nullptr;
+      auto result = wbuffer();
+      init();
+      return result;
+    }
+  };
+}
 
 DynamicBuffer::DynamicBuffer(String&& s) : _data(nullptr), _len(s.length()) {
-  auto rb = ReleasableString(std::move(s));
+  auto rb = DynamicBufferString(std::move(s));
   _data = rb.release();
   if (!_data) {
     *this = DynamicBuffer(rb);  // use const-ref constructor to copy string
   }
+}
+
+String toString(DynamicBuffer buf) {  
+  auto dbstr = DynamicBufferString(std::move(buf));
+  return std::move(*static_cast<String*>(&dbstr));  // Move-construct the result string from dbstr
 }
 
 template<typename list_type>
