@@ -19,7 +19,7 @@
     "type": "git",
     "url": "https://github.com/willmmiles/ESPAsyncWebServer.git"
   },
-  "version": "2.0.8",
+  "version": "2.1.0",
   "license": "LGPL-3.0",
   "frameworks": "arduino",
   "platforms": ["espressif8266", "espressif32"],
