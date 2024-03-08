@@ -8,6 +8,9 @@
 #include <list>
 #include <utility>
 
+// Forward declaration
+class SharedBuffer;
+
 // The DynamicBuffer class holds a malloc() allocated heap buffer.
 // It's similar to std::vector<char>, but permits allocation failures without crashing the system.
 class DynamicBuffer {
@@ -23,6 +26,8 @@ class DynamicBuffer {
   DynamicBuffer(const char* buf, size_t len) : DynamicBuffer(len) { if (_data) memcpy(_data, buf, len); };
   explicit DynamicBuffer(const String& s) : DynamicBuffer(s.begin(), s.length()) {};
   explicit DynamicBuffer(String&&);  // Move string contents in to buffer if possible
+  DynamicBuffer(const SharedBuffer&);
+  DynamicBuffer(SharedBuffer&&);
   ~DynamicBuffer() { clear(); };
   
   // Move
@@ -48,6 +53,7 @@ class DynamicBuffer {
 // Same interface as DynamicBuffer, but with shared_ptr semantics: buffer is held until last copy releases it.
 class SharedBuffer {
   std::shared_ptr<DynamicBuffer> _buf;
+  friend class DynamicBuffer;
 
   public:
 
@@ -56,8 +62,8 @@ class SharedBuffer {
   SharedBuffer(const char* buf, size_t len) : _buf(std::make_shared<DynamicBuffer>(buf, len)) {};
   explicit SharedBuffer(const String& s) : _buf(std::make_shared<DynamicBuffer>(s)) {};
   explicit SharedBuffer(String&& s) : _buf(std::make_shared<DynamicBuffer>(std::move(s))) {};
-  explicit SharedBuffer(const DynamicBuffer &d) : _buf(std::make_shared<DynamicBuffer>(d)) {};
-  explicit SharedBuffer(DynamicBuffer&& d) : _buf(std::make_shared<DynamicBuffer>(std::move(d))) {};
+  SharedBuffer(const DynamicBuffer &d) : _buf(std::make_shared<DynamicBuffer>(d)) {};
+  SharedBuffer(DynamicBuffer&& d) : _buf(std::make_shared<DynamicBuffer>(std::move(d))) {};
 
   char* data() const { return _buf ? _buf->data() : nullptr; };
   size_t size() const { return _buf ? _buf->size() : 0U; };
