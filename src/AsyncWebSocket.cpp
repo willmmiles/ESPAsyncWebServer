@@ -778,7 +778,7 @@ void AsyncWebSocketClient::text(const __FlashStringHelper *data){
     free(message);
   }
 }
-void AsyncWebSocketClient::text(AsyncWebSocketSharedBuffer buffer)
+void AsyncWebSocketClient::text(AsyncWebSocketBuffer buffer)
 {
   _queueMessage(new AsyncWebSocketMultiMessage(std::move(buffer)));
 }
@@ -815,7 +815,7 @@ void AsyncWebSocketClient::binary(const __FlashStringHelper *data, size_t len){
   }
   
 }
-void AsyncWebSocketClient::binary(AsyncWebSocketSharedBuffer buffer)
+void AsyncWebSocketClient::binary(AsyncWebSocketBuffer buffer)
 {
   _queueMessage(new AsyncWebSocketMultiMessage(std::move(buffer), WS_BINARY));
 }
@@ -944,22 +944,19 @@ void AsyncWebSocket::text(uint32_t id, const char * message, size_t len){
     c->text(message, len);
 }
 
-void AsyncWebSocket::textAll(const AsyncWebSocketSharedBuffer& buffer){
+void AsyncWebSocket::textAll(AsyncWebSocketBuffer buffer){
   if (!buffer) return;
-  for(const auto& c: _clients){
-    if(c->status() == WS_CONNECTED){
-        c->text(buffer);
-    }
-  }
+  messageAll(AsyncWebSocketMultiMessage(std::move(buffer)));
 }
 
 void AsyncWebSocket::textAll(const char * message, size_t len){
-  textAll(AsyncWebSocketSharedBuffer(message, len)); 
+  if ((!message) || (len ==0)) return;
+  messageAll(AsyncWebSocketMultiMessage(SharedBuffer{message, len}));
 }
 
 void AsyncWebSocket::textAll(const AsyncWebSocketMessageBuffer* buffer){
   if (!buffer) return;
-  textAll(buffer->_buf);
+  textAll(std::move(buffer->_buf));
   delete buffer;
 }
 
@@ -970,20 +967,17 @@ void AsyncWebSocket::binary(uint32_t id, const char * message, size_t len){
 }
 
 void AsyncWebSocket::binaryAll(const char * message, size_t len){
-  binaryAll(SharedBuffer(message, len)); 
+  binaryAll(DynamicBuffer(message, len));
 }
 
-void AsyncWebSocket::binaryAll(const AsyncWebSocketSharedBuffer &buffer)
+void AsyncWebSocket::binaryAll(AsyncWebSocketBuffer buffer)
 {
-    for(const auto& c: _clients){
-    if(c->status() == WS_CONNECTED)
-      c->binary(buffer);
-  }
+  messageAll(AsyncWebSocketMultiMessage(std::move(buffer), WS_BINARY));
 }
 
 void AsyncWebSocket::binaryAll(const AsyncWebSocketMessageBuffer* buffer){
   if (!buffer) return;
-  binaryAll(buffer->_buf);
+  binaryAll(std::move(buffer->_buf));
   delete buffer;
 }
 
@@ -1023,7 +1017,7 @@ size_t AsyncWebSocket::printfAll(const char *format, ...) {
   va_end(arg);
   delete[] temp;
   
-  AsyncWebSocketSharedBuffer buffer(len); 
+  AsyncWebSocketBuffer buffer(len); 
   if (!buffer) {
     return 0;
   }
@@ -1061,7 +1055,7 @@ size_t AsyncWebSocket::printfAll_P(PGM_P formatP, ...) {
   va_end(arg);
   delete[] temp;
   
-  AsyncWebSocketSharedBuffer buffer(len); 
+  AsyncWebSocketBuffer buffer(len); 
   if (!buffer) {
     return 0;
   }
@@ -1198,7 +1192,7 @@ void AsyncWebSocket::handleRequest(AsyncWebServerRequest *request){
 // Deprecated API
 AsyncWebSocketMessageBuffer* AsyncWebSocket::makeBuffer(size_t size)
 {
-  AsyncWebSocketSharedBuffer buffer(size);  
+  AsyncWebSocketBuffer buffer(size);  
   if (buffer.size() == 0) {
     return nullptr;
   }
@@ -1207,7 +1201,7 @@ AsyncWebSocketMessageBuffer* AsyncWebSocket::makeBuffer(size_t size)
 
 AsyncWebSocketMessageBuffer* AsyncWebSocket::makeBuffer(const uint8_t * data, size_t size)
 {
-  AsyncWebSocketSharedBuffer buffer((const char*) data, size); 
+  AsyncWebSocketBuffer buffer((const char*) data, size); 
   if (buffer.size() == 0) {
     return nullptr;
   }
