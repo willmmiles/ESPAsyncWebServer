@@ -33,6 +33,12 @@ DynamicBuffer::DynamicBuffer(String&& s) : _data(nullptr), _len(s.length()) {
   }
 }
 
+DynamicBuffer::DynamicBuffer(const SharedBuffer& b) : DynamicBuffer(b.copy()) {};
+
+DynamicBuffer::DynamicBuffer(SharedBuffer&& b) : _data(nullptr), _len(0) {
+  if (b) *this = std::move(*b._buf);
+}
+
 String toString(DynamicBuffer buf) {  
   auto dbstr = DynamicBufferString(std::move(buf));
   return std::move(*static_cast<String*>(&dbstr));  // Move-construct the result string from dbstr
