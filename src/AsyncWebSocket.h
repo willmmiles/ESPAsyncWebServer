@@ -89,20 +89,22 @@ typedef enum { WS_CONTINUATION, WS_TEXT, WS_BINARY, WS_DISCONNECT = 0x08, WS_PIN
 typedef enum { WS_MSG_SENDING, WS_MSG_SENT, WS_MSG_ERROR } AwsMessageStatus;
 typedef enum { WS_EVT_CONNECT, WS_EVT_DISCONNECT, WS_EVT_PONG, WS_EVT_ERROR, WS_EVT_DATA } AwsEventType;
 
+typedef DynamicBuffer AsyncWebSocketBuffer;
 typedef SharedBuffer AsyncWebSocketSharedBuffer;
 
-// API compatibility class - use AsyncWebSocketSharedBuffer directly
+// API compatibility class.
+// Use AsyncWebSocketBuffer directly instead of this where possible.
 class AsyncWebSocketMessageBuffer {
   private:
-    AsyncWebSocketSharedBuffer _buf;
+    DynamicBuffer _buf;
 
   public:
     AsyncWebSocketMessageBuffer() {};
     AsyncWebSocketMessageBuffer(size_t size) : _buf(size) {};
     AsyncWebSocketMessageBuffer(uint8_t * data, size_t size)  : _buf(reinterpret_cast<char*>(data), size) {};
-    AsyncWebSocketMessageBuffer(const AsyncWebSocketMessageBuffer &r) { if (r._buf) _buf = SharedBuffer(r._buf.copy()); }
+    AsyncWebSocketMessageBuffer(const AsyncWebSocketMessageBuffer &r) { if (r._buf) _buf = r._buf; }
     AsyncWebSocketMessageBuffer(AsyncWebSocketMessageBuffer &&) = default;
-    AsyncWebSocketMessageBuffer(AsyncWebSocketSharedBuffer b) : _buf(std::move(b)) {};
+    AsyncWebSocketMessageBuffer(DynamicBuffer b) : _buf(std::move(b)) {};
     ~AsyncWebSocketMessageBuffer() {};
 
     void operator ++(int i) {};
@@ -160,6 +162,7 @@ class AsyncWebSocketMultiMessage: public AsyncWebSocketMessage {
     AsyncWebSocketSharedBuffer _WSbuffer; 
 public:
     AsyncWebSocketMultiMessage(AsyncWebSocketSharedBuffer buffer, uint8_t opcode=WS_TEXT, bool mask=false); 
+    AsyncWebSocketMultiMessage(AsyncWebSocketBuffer buffer, uint8_t opcode=WS_TEXT, bool mask=false) : AsyncWebSocketMultiMessage(AsyncWebSocketSharedBuffer(std::move(buffer)), opcode, mask){}; 
     virtual ~AsyncWebSocketMultiMessage() override;
     virtual bool betweenFrames() const override { return _acked == _ack; }
     virtual void ack(size_t len, uint32_t time) override ;
@@ -233,7 +236,7 @@ class AsyncWebSocketClient {
     void text(char * message);
     void text(const String &message);
     void text(const __FlashStringHelper *data);
-    void text(AsyncWebSocketSharedBuffer buffer); 
+    void text(AsyncWebSocketBuffer buffer); 
     void text(AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer 
 
     void binary(const char * message, size_t len);
@@ -242,7 +245,7 @@ class AsyncWebSocketClient {
     void binary(char * message);
     void binary(const String &message);
     void binary(const __FlashStringHelper *data, size_t len);
-    void binary(AsyncWebSocketSharedBuffer buffer); 
+    void binary(AsyncWebSocketBuffer buffer); 
     void binary(AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer 
 
     bool canSend() { return _messageQueue.length() < WS_MAX_QUEUED_MESSAGES; }
@@ -295,6 +298,7 @@ class AsyncWebSocket: public AsyncWebHandler {
     void text(uint32_t id, char * message);
     void text(uint32_t id, const String &message);
     void text(uint32_t id, const __FlashStringHelper *message);
+    void text(uint32_t id, AsyncWebSocketBuffer buffer); 
 
     void textAll(const char * message, size_t len);
     void textAll(const char * message);
@@ -302,7 +306,7 @@ class AsyncWebSocket: public AsyncWebHandler {
     void textAll(char * message);
     void textAll(const String &message);
     void textAll(const __FlashStringHelper *message); //  need to convert
-    void textAll(const AsyncWebSocketSharedBuffer& buffer); 
+    void textAll(AsyncWebSocketBuffer buffer); // must be moved, or will be copied
     void textAll(const AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer
 
     void binary(uint32_t id, const char * message, size_t len);
@@ -318,7 +322,7 @@ class AsyncWebSocket: public AsyncWebHandler {
     void binaryAll(char * message);
     void binaryAll(const String &message);
     void binaryAll(const __FlashStringHelper *message, size_t len);
-    void binaryAll(const AsyncWebSocketSharedBuffer& buffer); 
+    void binaryAll(AsyncWebSocketBuffer buffer); 
     void binaryAll(const AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer
 
     void message(uint32_t id, AsyncWebSocketMessage *message);
