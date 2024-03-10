@@ -240,12 +240,14 @@ size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint
 
     while(space && available) {      
       auto buf_it = _content.begin();
+      auto to_write = std::min(space, buf_it->size());
+      auto last_write = (to_write == space) || (to_write == available);
       auto written = request->client()->write(buf_it->data(),
-                                              std::min(space, buf_it->size()),
-                                              // TODO - fix this, it isn't right
-                                              // needs to be sensitive to available, too
-                                              ASYNC_WRITE_FLAG_COPY | (space > buf_it->size() ? ASYNC_WRITE_FLAG_MORE : 0));
-      DEBUG_PRINTFP("(%d) wrote %d/%d/%d", (intptr_t) this, written, space, available);  
+                                              to_write,
+                                              ASYNC_WRITE_FLAG_COPY | (last_write ? 0 : ASYNC_WRITE_FLAG_MORE));
+      
+      DEBUG_PRINTFP("(%d) wrote %d/%d (%d, %d)\n", (intptr_t) this, written, to_write, space, available);  
+      
       if (written == 0) {
         // TODO - handle!!
         request->client()->send();
@@ -314,7 +316,9 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
   bool needs_send = false;
 
   if(_state == RESPONSE_HEADERS){
-    auto headWritten = request->client()->add(_head.c_str(), std::min(space, headLen));
+    auto to_write = std::min(space, headLen);
+    auto more = space > headLen;
+    auto headWritten = request->client()->add(_head.c_str(), to_write, ASYNC_WRITE_FLAG_COPY | (more ? ASYNC_WRITE_FLAG_MORE : 0));
     _writtenLength += headWritten;
     if (headWritten < headLen) {
       _head = _head.substring(headWritten);
@@ -330,7 +334,9 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
   if(_state == RESPONSE_CONTENT){
     if (_packet.size()) {
       // Complete the cached data
-      auto written = request->client()->add((const char*) _packet.data(), std::min(space, (size_t) _packet.size()));
+      auto to_write = std::min(space, (size_t) _packet.size());
+      auto more = space > (size_t) _packet.size();
+      auto written = request->client()->add((const char*) _packet.data(), to_write, ASYNC_WRITE_FLAG_COPY | (more ? ASYNC_WRITE_FLAG_MORE : 0));
       _writtenLength += written;
       _packet.erase(_packet.begin(), _packet.begin() + written);
       space -= written;
@@ -403,7 +409,7 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     _packet.resize(outLen);
 
     if(_packet.size()){      
-        auto acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size());
+        auto acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size(), ASYNC_WRITE_FLAG_COPY);
         _writtenLength += acceptedLen;
         _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
         if (acceptedLen < outLen) {
