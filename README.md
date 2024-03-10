@@ -1,5 +1,5 @@
 # ESPAsyncWebServer (Fork for WLED)
-[![Build Status](https://travis-ci.org/willmmiles/ESPAsyncWebServer.svg?branch=master)](https://travis-ci.org/willmmiles/ESPAsyncWebServer) ![](https://github.com/willmmiles/ESPAsyncWebServer/workflows/ESP%20Async%20Web%20Server%20CI/badge.svg) [![Codacy Badge](https://api.codacy.com/project/badge/Grade/395dd42cfc674e6ca2e326af3af80ffc)](https://www.codacy.com/manual/willmmiles/ESPAsyncWebServer?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=willmmiles/ESPAsyncWebServer&amp;utm_campaign=Badge_Grade)
+[![Build Status](https://travis-ci.org/Aircoookie/ESPAsyncWebServer.svg?branch=master)](https://travis-ci.org/Aircoookie/ESPAsyncWebServer) ![](https://github.com/Aircoookie/ESPAsyncWebServer/workflows/ESP%20Async%20Web%20Server%20CI/badge.svg) [![Codacy Badge](https://api.codacy.com/project/badge/Grade/395dd42cfc674e6ca2e326af3af80ffc)](https://www.codacy.com/manual/Aircoookie/ESPAsyncWebServer?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=Aircoookie/ESPAsyncWebServer&amp;utm_campaign=Badge_Grade)
 
 
 Async HTTP and WebSocket Server for ESP8266 Arduino
@@ -113,7 +113,7 @@ framework = arduino
 lib_deps = ESP Async WebServer
 
 # or using GIT Url (the latest development version)
-lib_deps = https://github.com/willmmiles/ESPAsyncWebServer.git
+lib_deps = https://github.com/Aircoookie/ESPAsyncWebServer.git
 ```
  5. Happy coding with PlatformIO!
 
