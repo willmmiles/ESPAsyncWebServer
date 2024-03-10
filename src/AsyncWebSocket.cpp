@@ -81,7 +81,7 @@ static size_t webSocketSendFrameHeader(AsyncClient *client, bool final, uint8_t 
     }
   }
 
-  size_t sent = client->add((const char *)buf, headLen);
+  size_t sent = client->add((const char *)buf, headLen, ASYNC_WRITE_FLAG_COPY | ASYNC_WRITE_FLAG_MORE);
   if(sent != headLen){
     //os_printf("error adding %lu header bytes\n", headLen);
     // we are in BIG trouble as we don't cache the headers...!
@@ -99,12 +99,11 @@ static size_t webSocketSendFrame(AsyncClient *client, bool final, uint8_t opcode
   size_t added = 0;
   if(len){
     // Apply the mask
-    if(len && mask){
-      size_t i;
-      for(i=0;i<len;i++)
+    if(mask){
+      for(size_t i=0;i<len;i++)
         data[i] = data[i] ^ mbuf[i%4];
     }    
-    added = client->add((const char *)data, len);
+    added = client->add((const char *)data, len, ASYNC_WRITE_FLAG_COPY);
   }
   client->send();
   return added;
@@ -405,6 +404,25 @@ void AsyncWebSocketBufferListMessage::ack(size_t len, uint32_t time)  {
   //ets_printf("A: %u\n", len);
 }
 
+static size_t sendListData(AsyncClient* client, std::list<SharedBuffer>& list, size_t& offset, size_t len) {
+  // Send data to client from (list, offset) up to len
+  size_t sent = 0;
+  while ((len > 0) && !list.empty()) {
+    auto& buf = list.front();
+    auto to_write = std::min(len, buf.size() - offset);
+    auto added = client->add(buf.data() + offset, to_write, ((to_write != len) ? ASYNC_WRITE_FLAG_MORE : 0) | ASYNC_WRITE_FLAG_COPY);
+    len -= added;
+    sent += added;
+    offset += added;
+    if (offset == buf.size()) {
+      list.pop_front();
+      offset = 0;
+    }
+    if (added != to_write) break; // something went wrong
+  }
+  return sent;
+}
+
 size_t AsyncWebSocketBufferListMessage::send(AsyncClient *client)  {
   if(_status != WS_MSG_SENDING)
     return 0;
@@ -422,9 +440,12 @@ size_t AsyncWebSocketBufferListMessage::send(AsyncClient *client)  {
   }
   if (_sent < _attempted) {
     // Frame was truncated
-    size_t sent = client->write(_data.front().data() + _sent, _attempted - _sent);
-    _ack += sent;
-    _sent += sent;
+    size_t sent = sendListData(client, _data, _buf_sent, _attempted - _sent);
+    if (sent) {
+      _ack += sent;
+      _sent += sent;
+      client->send();
+    }
     return sent;
   }    
 
@@ -435,16 +456,36 @@ size_t AsyncWebSocketBufferListMessage::send(AsyncClient *client)  {
       toSend = window;
   }
 
+  _attempted += toSend;
   _sent += toSend;
-  _ack += toSend + ((toSend < 126)?2:4) + (_mask * 4);
-
-  //ets_printf("W: %u %u\n", _sent - toSend, toSend);
-
+  _ack += toSend + webSocketHeaderLength(_mask, toSend);
   bool final = (_sent == _len);
-  uint8_t* dPtr = (uint8_t*)(_WSbuffer.data() + (_sent - toSend));
   uint8_t opCode = (toSend && _sent == toSend)?_opcode:(uint8_t)WS_CONTINUATION;
 
-  size_t sent = webSocketSendFrame(client, final, opCode, _mask, dPtr, toSend);
+  uint8_t mbuf[4];
+  if (webSocketSendFrameHeader(client, final, opCode, _mask ? mbuf : nullptr, toSend) == 0) {
+    return 0;
+  }
+
+  size_t sent = 0;
+  if(toSend){    
+    if(_mask) {
+      // Apply the mask to the data buffer
+      // We are guaranteed to be not-actually-shared if mask is set
+      auto buf_it = _data.begin();
+      size_t buf_offset = _buf_sent;
+      for(size_t i=0;i<toSend;i++) {
+        if (buf_offset == buf_it->size()) {
+          ++buf_it; buf_offset = 0;
+        }
+        auto& element = buf_it->data()[buf_offset];
+        element = element ^ mbuf[i%4];
+        ++buf_offset;
+      }
+    }
+    sent = sendListData(client, _data, _buf_sent, toSend);
+  }
+  client->send();
   _status = WS_MSG_SENDING;
   if(toSend && sent != toSend){
       //ets_printf("E: %u != %u\n", toSend, sent);
