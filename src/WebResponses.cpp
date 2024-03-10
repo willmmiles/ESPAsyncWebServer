@@ -202,50 +202,32 @@ size_t AsyncWebServerResponse::_ack(AsyncWebServerRequest *request, size_t len, 
 /*
  * String/Code Response
  * */
-AsyncBasicResponse::AsyncBasicResponse(int code, String contentType, String content){
+AsyncBasicResponse::AsyncBasicResponse(int code, String contentType, DynamicBufferList content) : _content(std::move(content)), _buf_offset(0) {
   _code = code;
-  _content = std::move(content);
   _contentType = std::move(contentType);
-  if(_content.length()){
-    _contentLength = _content.length();
-    if(!_contentType.length())
+  _contentLength = totalSize(_content);
+  if(_contentLength && !_contentType.length()) {
       _contentType = FPSTR(CONTENT_TYPE_PLAIN);
   }
   addHeader(F("Connection"),F("close"));
 }
 
+static DynamicBufferList bufferListFromString(String&& str) {
+  DynamicBufferList rv;
+  if (str.length()) rv.emplace_back(std::move(str));
+  return rv;
+}
+
+AsyncBasicResponse::AsyncBasicResponse(int code, String contentType, String content) : AsyncBasicResponse(code, std::move(contentType), bufferListFromString(std::move(content))) {};
+
 void AsyncBasicResponse::_respond(AsyncWebServerRequest *request){
-  _state = RESPONSE_HEADERS;
+  // Push the header on to the content list
   String out = _assembleHead(request->version());
-  size_t outLen = out.length();
-  size_t space = request->client()->space();
-  if(!_contentLength && space >= outLen){
-    _writtenLength += request->client()->write(out.c_str(), outLen);
-    _state = RESPONSE_WAIT_ACK;
-  } else if(_contentLength && space >= outLen + _contentLength){
-    out += _content;
-    outLen += _contentLength;
-    _writtenLength += request->client()->write(out.c_str(), outLen);
-    _state = RESPONSE_WAIT_ACK;
-  } else if(space && space < outLen){
-    String partial = out.substring(0, space);
-    _content = out.substring(space) + _content;
-    _contentLength += outLen - space;
-    _writtenLength += request->client()->write(partial.c_str(), partial.length());
-    _state = RESPONSE_CONTENT;
-  } else if(space > outLen && space < (outLen + _contentLength)){
-    size_t shift = space - outLen;
-    outLen += shift;
-    _sentLength += shift;
-    out += _content.substring(0, shift);
-    _content = _content.substring(shift);
-    _writtenLength += request->client()->write(out.c_str(), outLen);
-    _state = RESPONSE_CONTENT;
-  } else {
-    _content = out + _content;
-    _contentLength += outLen;
-    _state = RESPONSE_CONTENT;
-  }
+  _contentLength += out.length();
+  _content.emplace_front(std::move(out));  
+  _state = RESPONSE_CONTENT;
+  // Call ack to send some data
+  _ack(request, 0, 0);
 }
 
 size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
@@ -254,19 +236,33 @@ size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint
   if(_state == RESPONSE_CONTENT){
     size_t available = _contentLength - _sentLength;
     size_t space = request->client()->space();
-    //we can fit in this packet
-    if(space > available){
-      _writtenLength += request->client()->write(_content.c_str(), available);
-      _content = String();
-      _state = RESPONSE_WAIT_ACK;
-      return available;
+    size_t total_written = 0;
+
+    while(space && available) {      
+      auto buf_it = _content.begin();
+      auto written = request->client()->write(buf_it->data(),
+                                              std::min(space, buf_it->size()),
+                                              // TODO - fix this, it isn't right
+                                              // needs to be sensitive to available, too
+                                              ASYNC_WRITE_FLAG_COPY | (space > buf_it->size() ? ASYNC_WRITE_FLAG_MORE : 0));
+      DEBUG_PRINTFP("(%d) wrote %d/%d/%d", (intptr_t) this, written, space, available);  
+      if (written == 0) {
+        // TODO - handle!!
+        request->client()->send();
+        return total_written;
+      }
+      total_written += written;
+      _writtenLength += written;
+      _sentLength += written;
+      available -= written;
+      space -= written;
+      _buf_offset += written;
+      if (_buf_offset == buf_it->size()) { _content.pop_front(); _buf_offset = 0; }
     }
-    //send some data, the rest on ack
-    String out = _content.substring(0, space);
-    _content = _content.substring(space);
-    _sentLength += space;
-    _writtenLength += request->client()->write(out.c_str(), space);
-    return space;
+    
+    if (available == 0) {
+      _state = RESPONSE_WAIT_ACK;
+    }
   } else if(_state == RESPONSE_WAIT_ACK){
     if(_ackedLength >= _writtenLength){
       _state = RESPONSE_END;

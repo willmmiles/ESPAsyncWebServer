@@ -27,14 +27,17 @@
 #undef max
 #endif
 #include <vector>
+#include "DynamicBuffer.h"
 #include "default_init_allocator.h"
 // It is possible to restore these defines, but one can use _min and _max instead. Or std::min, std::max.
 
 class AsyncBasicResponse: public AsyncWebServerResponse {
   private:
-    String _content;
+    DynamicBufferList _content;
+    size_t _buf_offset;
   public:
-    AsyncBasicResponse(int code, String contentType=String(), String content=String());
+    AsyncBasicResponse(int code, String contentType, String content);
+    AsyncBasicResponse(int code, String contentType=String(), DynamicBufferList content=DynamicBufferList());
     void _respond(AsyncWebServerRequest *request);
     size_t _ack(AsyncWebServerRequest *request, size_t len, uint32_t time);
     bool _sourceValid() const { return true; }
