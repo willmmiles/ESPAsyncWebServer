@@ -254,7 +254,7 @@ class AsyncWebSocketClient {
     void text(const String &message);
     void text(const __FlashStringHelper *data);
     void text(AsyncWebSocketBuffer buffer); 
-    void text(SharedBufferList buffers);
+    void text(DynamicBufferList buffers);
     void text(AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer 
 
     void binary(const char * message, size_t len);
@@ -317,8 +317,7 @@ class AsyncWebSocket: public AsyncWebHandler {
     void text(uint32_t id, const String &message);
     void text(uint32_t id, const __FlashStringHelper *message);
     void text(uint32_t id, AsyncWebSocketBuffer buffer); 
-    void text(uint32_t id, AsyncWebSocketSharedBuffer buffer); 
-    void text(uint32_t id, SharedBufferList buffers);
+    void text(uint32_t id, DynamicBufferList buffers);
 
     void textAll(const char * message, size_t len);
     void textAll(const char * message);
@@ -327,7 +326,7 @@ class AsyncWebSocket: public AsyncWebHandler {
     void textAll(const String &message);
     void textAll(const __FlashStringHelper *message); //  need to convert
     void textAll(AsyncWebSocketBuffer buffer); // must be moved, or will be copied
-    void textAll(const SharedBufferList& buffers);
+    void textAll(DynamicBufferList buffers);   // must be moved, or will be copied
     void textAll(const AsyncWebSocketMessageBuffer* buffer) __attribute__((deprecated));  // frees buffer
 
     void binary(uint32_t id, const char * message, size_t len);

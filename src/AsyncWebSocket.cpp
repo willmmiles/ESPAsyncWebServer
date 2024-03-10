@@ -913,8 +913,9 @@ void AsyncWebSocketClient::text(AsyncWebSocketBuffer buffer)
 {
   _queueMessage(new AsyncWebSocketMultiMessage(std::move(buffer)));
 }
-void AsyncWebSocketClient::text(SharedBufferList buffers) {
-  _queueMessage(new AsyncWebSocketBufferListMessage(std::move(buffers)));
+void AsyncWebSocketClient::text(DynamicBufferList buffers) {
+  // Build a SharedBufferList by moving out the contents of buffers
+  _queueMessage(new AsyncWebSocketBufferListMessage(sharedBufferListFromDynamic(std::move(buffers))));
 }
 void AsyncWebSocketClient::text(AsyncWebSocketMessageBuffer* buffer)
 {
@@ -1088,14 +1089,14 @@ void AsyncWebSocket::textAll(const char * message, size_t len){
   messageAll(AsyncWebSocketMultiMessage(SharedBuffer{message, len}));
 }
 
-void AsyncWebSocket::textAll(const SharedBufferList& buffers){
+void AsyncWebSocket::textAll(DynamicBufferList buffers){
+  auto shared_buffers = sharedBufferListFromDynamic(std::move(buffers));
   for(const auto& c: _clients){
     if(c->status() == WS_CONNECTED){
-        c->text(buffers); // Makes copy of list for each client
+        c->message(new AsyncWebSocketBufferListMessage(shared_buffers));  // each client gets a copy of the list; ok since we're not masking
     }
   }
 }
-
 
 void AsyncWebSocket::textAll(const AsyncWebSocketMessageBuffer* buffer){
   if (!buffer) return;
