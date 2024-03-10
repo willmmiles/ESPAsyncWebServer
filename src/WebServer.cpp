@@ -21,6 +21,10 @@
 #include "ESPAsyncWebServer.h"
 #include "WebHandlerImpl.h"
 
+#ifndef ASYNCWEBSERVER_MINIMUM_HEAP
+#define ASYNCWEBSERVER_MINIMUM_HEAP 1536
+#endif
+
 bool ON_STA_FILTER(AsyncWebServerRequest *request) {
   return WiFi.localIP() == request->client()->localIP();
 }
@@ -49,6 +53,18 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelReq
     if(c == NULL)
       return;
     c->setRxTimeout(3);
+
+    if (((_maxRequests > 0) && (_requestQueue.length() >= _maxRequests))
+        || (ESP.getFreeHeap() < ASYNCWEBSERVER_MINIMUM_HEAP))
+    {
+      // Don't even allocate anything we can avoid.  Tell the client we're in trouble with a static response.
+      const static char msg_progmem[] PROGMEM = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
+      char msg_stack[sizeof(msg_progmem)];  // stack, so we can pull it out of flash memory
+      memcpy_P(msg_stack, msg_progmem, sizeof(msg_stack));
+      c->write(msg_stack, sizeof(msg_stack));
+      c->close();
+      return;
+    }
     
     AsyncWebServerRequest *r = new AsyncWebServerRequest((AsyncWebServer*)s, c);
     if(r == NULL){
@@ -57,21 +73,7 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelReq
       delete c;
       return;
     }
-
-    if (!_maxRequests || _requestQueue.length() < _maxRequests) {
-      _requestQueue.add(r);
-    } else {
-      // Immediately send a try-again-later response 
-      AsyncWebServerResponse *response = r->beginResponse(503);
-      if(!response){
-        c->close(true);
-        c->free();
-        delete c;
-        return;
-      } 
-      response->addHeader(F("Retry-After"), F("1"));
-      r->send(response);
-    }
+    _requestQueue.add(r);
   }, this);
 }
 
