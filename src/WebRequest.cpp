@@ -581,6 +581,13 @@ void AsyncWebServerRequest::_parseLine(){
   if(_parseState == PARSE_REQ_HEADERS){
     if(!_temp.length()){
       //end of headers
+      if (_handler) {
+        // A handler was already attached by the server's queue management
+        _parseState = PARSE_REQ_END;
+        _handler->handleRequest(this);
+        return;
+      }
+
       _server->_rewriteRequest(this);
       DEBUG_PRINTFP("(%d) WR ready %s", (intptr_t) this, url().c_str());
       // If queue is full, hold this request
