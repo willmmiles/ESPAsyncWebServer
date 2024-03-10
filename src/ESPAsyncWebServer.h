@@ -196,8 +196,8 @@ class AsyncWebServerRequest {
     void _parseMultipartPostByte(uint8_t data, bool last);
     void _addGetParams(const String& params);
     
-    void _setupHandler();
-    void _onReady();  // called when the queue permits this request to run
+    void _requestReady();
+    void _handleRequest();  // called when the queue permits this request to run
 
     void _handleUploadStart();
     void _handleUploadByte(uint8_t data, bool last);
@@ -407,11 +407,11 @@ class AsyncWebServer {
     LinkedList<AsyncWebHandler*> _handlers;    
     AsyncCallbackWebHandler* _catchAllHandler;
     LinkedList<AsyncWebServerRequest*> _requestQueue;
-    size_t _parallelRequests, _maxRequests;
+    size_t _reqHeapUsage, _minHeap;
 
   public:
-    AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelRequests = 0, size_t maxRequests = 0);
-    AsyncWebServer(uint16_t port, size_t parallelRequests = 0, size_t maxRequests = 0);
+    AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsage = 0, size_t minHeap = 0);
+    AsyncWebServer(uint16_t port, size_t reqHeapUsage = 0, size_t minHeap = 0);
     ~AsyncWebServer();
 
     void begin();
@@ -448,7 +448,8 @@ class AsyncWebServer {
     void _handleDisconnect(AsyncWebServerRequest *request);
     void _attachHandler(AsyncWebServerRequest *request);
     void _rewriteRequest(AsyncWebServerRequest *request);
-    bool _isQueued(AsyncWebServerRequest *request);
+
+    void _processQueue();
     void _dequeue(AsyncWebServerRequest *request);
     void _defer(AsyncWebServerRequest *request);
 };

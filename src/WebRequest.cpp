@@ -30,7 +30,7 @@ static const String SharedEmptyString = String();
 
 #define __is_param_char(c) ((c) && ((c) != '{') && ((c) != '[') && ((c) != '&') && ((c) != '='))
 
-enum { PARSE_REQ_START, PARSE_REQ_HEADERS, PARSE_REQ_BODY, PARSE_REQ_END, PARSE_REQ_FAIL, PARSE_REQ_QUEUED };
+enum { PARSE_REQ_START, PARSE_REQ_HEADERS, PARSE_REQ_BODY, PARSE_REQ_END=100, PARSE_REQ_FAIL, PARSE_REQ_QUEUED=200, PARSE_REQ_DEFERRED=201 };
 
 #ifdef ASYNCWEBSERVER_DEBUG_TRACE
 #define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]{%d}" fmt "\n"), millis(), ESP.getFreeHeap(), ##__VA_ARGS__)
@@ -181,10 +181,7 @@ void AsyncWebServerRequest::_onData(void *buf, size_t len){
       }
     }
     if(_parsedLength == _contentLength){
-      _parseState = PARSE_REQ_END;
-      //check if authenticated before calling handleRequest and request auth instead
-      if(_handler) _handler->handleRequest(this);
-      else send(501);
+      _requestReady();
     }
   }
   break;
@@ -204,7 +201,9 @@ void AsyncWebServerRequest::_removeNotInterestingHeaders(){
 
 void AsyncWebServerRequest::_onPoll(){
   //os_printf("p\n");
-  if(_response != NULL && _client != NULL && _client->canSend() && !_response->_finished()){
+  if (_parseState == PARSE_REQ_QUEUED) {
+    _server->_processQueue();
+  } else if(_response != NULL && _client != NULL && _client->canSend() && !_response->_finished()){
     _response->_ack(this, 0, 0);
   }
 }
@@ -581,57 +580,47 @@ void AsyncWebServerRequest::_parseLine(){
   if(_parseState == PARSE_REQ_HEADERS){
     if(!_temp.length()){
       //end of headers
-      if (_handler) {
-        // A handler was already attached by the server's queue management
-        _parseState = PARSE_REQ_END;
-        _handler->handleRequest(this);
-        return;
-      }
-
       _server->_rewriteRequest(this);
-      DEBUG_PRINTFP("(%d) WR ready %s", (intptr_t) this, url().c_str());
-      // If queue is full, hold this request
-      // Note we can't hold uploads as there's no way to stop the client from sending
-      if (!_server->_isQueued(this) || (_contentLength && !_expectingContinue)) {
-        _setupHandler();
-      } else {
-        _parseState = PARSE_REQ_QUEUED;
-      }
+      _server->_attachHandler(this);
+      _removeNotInterestingHeaders();
 
+      if(_expectingContinue){
+        const static char response[] PROGMEM = "HTTP/1.1 100 Continue\r\n\r\n";
+          char response_stack[sizeof(response)];  // stack, so we can pull it out of flash memory
+          memcpy_P(response_stack, response, sizeof(response));
+        _client->write(response_stack, os_strlen(response_stack));
+      }    
+
+      //check handler for authentication
+      if(_contentLength){
+        _parseState = PARSE_REQ_BODY;
+      } else {
+        _requestReady();
+      }      
     } else _parseReqHeader();
   }
 }
 
-void AsyncWebServerRequest::_setupHandler() {
-    DEBUG_PRINTFP("(%d) WR adding handler", (intptr_t) this);
-    _server->_attachHandler(this);
-    _removeNotInterestingHeaders();
-    if(_expectingContinue){
-      const static char response[] PROGMEM = "HTTP/1.1 100 Continue\r\n\r\n";
-        char response_stack[sizeof(response)];  // stack, so we can pull it out of flash memory
-        memcpy_P(response_stack, response, sizeof(response));
-      _client->write(response_stack, os_strlen(response_stack));
+void AsyncWebServerRequest::_requestReady() {
+    //check if authenticated before calling handleRequest and request auth instead
+    DEBUG_PRINTFP("(%d) WR handler ready %s", (intptr_t) this, url().c_str());
+    if(_handler) {
+      _parseState = PARSE_REQ_QUEUED;
+      _server->_processQueue();
     }
-    //check handler for authentication
-    if(_contentLength){
-      _parseState = PARSE_REQ_BODY;
-    } else {
+    else {
       _parseState = PARSE_REQ_END;
-      if(_handler) _handler->handleRequest(this);
-      else send(501);
+      send(501);
     }
 }
 
-void AsyncWebServerRequest::_onReady() {
-    if (_parseState == PARSE_REQ_QUEUED) {
-      _setupHandler();
-    } else if ((_parseState == PARSE_REQ_END) && !_response) {
-        DEBUG_PRINTFP("(%d) WR retrying handleRequest", (intptr_t) this);
-        // Shouldn't be possible to land here without a handler
-        if(_handler) _handler->handleRequest(this);
-        else send(501);
-    }
-}
+void AsyncWebServerRequest::_handleRequest() {
+  // Shouldn't be possible to land here without a handler
+  assert(_handler);
+  DEBUG_PRINTFP("(%d) WR handler running", (intptr_t) this);
+  _parseState = PARSE_REQ_END;
+  _handler->handleRequest(this);
+};
 
 size_t AsyncWebServerRequest::headers() const{
   return _headers.length();
@@ -1058,5 +1047,6 @@ bool AsyncWebServerRequest::isExpectedRequestedConnType(RequestedConnectionType 
 void AsyncWebServerRequest::deferResponse() {
   // Ask the server to put us on the back of the queue
   DEBUG_PRINTFP("(%d) WR defer", (intptr_t) this);
-  _server->_defer(this);
+  _parseState = PARSE_REQ_DEFERRED;
+  // Queue processing loop will handle it from here
 }
