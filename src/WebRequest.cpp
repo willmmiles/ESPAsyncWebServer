@@ -30,7 +30,7 @@ static const String SharedEmptyString = String();
 
 #define __is_param_char(c) ((c) && ((c) != '{') && ((c) != '[') && ((c) != '&') && ((c) != '='))
 
-enum { PARSE_REQ_START, PARSE_REQ_HEADERS, PARSE_REQ_BODY, PARSE_REQ_END, PARSE_REQ_FAIL };
+enum { PARSE_REQ_START, PARSE_REQ_HEADERS, PARSE_REQ_BODY, PARSE_REQ_END, PARSE_REQ_FAIL, PARSE_REQ_QUEUED };
 
 #ifdef ASYNCWEBSERVER_DEBUG_TRACE
 #define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]{%d}" fmt "\n"), millis(), ESP.getFreeHeap(), ##__VA_ARGS__)
@@ -105,6 +105,8 @@ AsyncWebServerRequest::~AsyncWebServerRequest(){
   if(_tempFile){
     _tempFile.close();
   }
+
+  _server->_dequeue(this);
   
   DEBUG_PRINTFP("(%d) WR destructed", (intptr_t)this);
 }
@@ -581,24 +583,41 @@ void AsyncWebServerRequest::_parseLine(){
       //end of headers
       _server->_rewriteRequest(this);
       DEBUG_PRINTFP("(%d) WR ready %s", (intptr_t) this, url().c_str());
-      _server->_attachHandler(this);
-      _removeNotInterestingHeaders();
-      if(_expectingContinue){
-        const static char response[] PROGMEM = "HTTP/1.1 100 Continue\r\n\r\n";
-        char response_stack[sizeof(response)];  // stack, so we can pull it out of flash memory
-        memcpy_P(response_stack, response, sizeof(response));
-        _client->write(response_stack, os_strlen(response_stack));
-      }
-      //check handler for authentication
-      if(_contentLength){
-        _parseState = PARSE_REQ_BODY;
+      // If queue is full, hold this request
+      // Note we can't hold uploads as there's no way to stop the client from sending
+      if (!_server->_isQueued(this) || (_contentLength && !_expectingContinue)) {
+        _setupHandler();
       } else {
-        _parseState = PARSE_REQ_END;
-        if(_handler) _handler->handleRequest(this);
-        else send(501);
+        _parseState = PARSE_REQ_QUEUED;
       }
+
     } else _parseReqHeader();
   }
+}
+
+void AsyncWebServerRequest::_setupHandler() {
+    _server->_attachHandler(this);
+    _removeNotInterestingHeaders();
+    if(_expectingContinue){
+      const static char response[] PROGMEM = "HTTP/1.1 100 Continue\r\n\r\n";
+        char response_stack[sizeof(response)];  // stack, so we can pull it out of flash memory
+        memcpy_P(response_stack, response, sizeof(response));
+      _client->write(response_stack, os_strlen(response_stack));
+    }
+    //check handler for authentication
+    if(_contentLength){
+      _parseState = PARSE_REQ_BODY;
+    } else {
+      _parseState = PARSE_REQ_END;
+      if(_handler) _handler->handleRequest(this);
+      else send(501);
+    }
+}
+
+void AsyncWebServerRequest::_onReady() {
+    if (_parseState == PARSE_REQ_QUEUED) {
+      _setupHandler();
+    } 
 }
 
 size_t AsyncWebServerRequest::headers() const{
