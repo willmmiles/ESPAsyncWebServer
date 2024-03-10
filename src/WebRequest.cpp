@@ -603,6 +603,7 @@ void AsyncWebServerRequest::_parseLine(){
 }
 
 void AsyncWebServerRequest::_setupHandler() {
+    DEBUG_PRINTFP("(%d) WR adding handler", (intptr_t) this);
     _server->_attachHandler(this);
     _removeNotInterestingHeaders();
     if(_expectingContinue){
@@ -624,7 +625,12 @@ void AsyncWebServerRequest::_setupHandler() {
 void AsyncWebServerRequest::_onReady() {
     if (_parseState == PARSE_REQ_QUEUED) {
       _setupHandler();
-    } 
+    } else if ((_parseState == PARSE_REQ_END) && !_response) {
+        DEBUG_PRINTFP("(%d) WR retrying handleRequest", (intptr_t) this);
+        // Shouldn't be possible to land here without a handler
+        if(_handler) _handler->handleRequest(this);
+        else send(501);
+    }
 }
 
 size_t AsyncWebServerRequest::headers() const{
@@ -749,6 +755,7 @@ void AsyncWebServerRequest::addInterestingHeader(const String& name){
 }
 
 void AsyncWebServerRequest::send(AsyncWebServerResponse *response){
+  DEBUG_PRINTFP("(%d) WR added response %d",(intptr_t)this, (intptr_t)response);
   _response = response;
   if(_response == NULL){
     _client->close(true);
@@ -1046,4 +1053,10 @@ bool AsyncWebServerRequest::isExpectedRequestedConnType(RequestedConnectionType 
     if ((erct2 != RCT_NOT_USED) && (erct2 == _reqconntype)) res = true;
     if ((erct3 != RCT_NOT_USED) && (erct3 == _reqconntype)) res = true;
     return res;
+}
+
+void AsyncWebServerRequest::deferResponse() {
+  // Ask the server to put us on the back of the queue
+  DEBUG_PRINTFP("(%d) WR defer", (intptr_t) this);
+  _server->_defer(this);
 }

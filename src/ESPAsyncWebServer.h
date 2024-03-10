@@ -256,6 +256,8 @@ class AsyncWebServerRequest {
     AsyncWebServerResponse *beginResponse_P(int code, const String& contentType, const uint8_t * content, size_t len, AwsTemplateProcessor callback=nullptr);
     AsyncWebServerResponse *beginResponse_P(int code, const String& contentType, PGM_P content, AwsTemplateProcessor callback=nullptr);
 
+    void deferResponse();  // Move to the back of the queue
+
     size_t headers() const;                     // get header count
     bool hasHeader(const String& name) const;   // check if header exists
     bool hasHeader(const __FlashStringHelper * data) const;   // check if header exists
@@ -448,6 +450,7 @@ class AsyncWebServer {
     void _rewriteRequest(AsyncWebServerRequest *request);
     bool _isQueued(AsyncWebServerRequest *request);
     void _dequeue(AsyncWebServerRequest *request);
+    void _defer(AsyncWebServerRequest *request);
 };
 
 class DefaultHeaders {
