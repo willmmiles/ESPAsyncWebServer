@@ -223,6 +223,7 @@ AsyncBasicResponse::AsyncBasicResponse(int code, String contentType, String cont
 void AsyncBasicResponse::_respond(AsyncWebServerRequest *request){
   // Push the header on to the content list
   String out = _assembleHead(request->version());
+  DEBUG_PRINTFP("(%d) responding, head %d, cl %d, size %d\n",(intptr_t) this, out.length(), _contentLength, totalSize(_content));
   _contentLength += out.length();
   _content.emplace_front(std::move(out));  
   _state = RESPONSE_CONTENT;
@@ -240,13 +241,13 @@ size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint
 
     while(space && available) {      
       auto buf_it = _content.begin();
-      auto to_write = std::min(space, buf_it->size());
+      auto to_write = std::min(space, buf_it->size() - _buf_offset);
       auto last_write = (to_write == space) || (to_write == available);
-      auto written = request->client()->write(buf_it->data(),
+      auto written = request->client()->write(buf_it->data() + _buf_offset,
                                               to_write,
                                               ASYNC_WRITE_FLAG_COPY | (last_write ? 0 : ASYNC_WRITE_FLAG_MORE));
       
-      DEBUG_PRINTFP("(%d) wrote %d/%d (%d, %d)\n", (intptr_t) this, written, to_write, space, available);  
+      DEBUG_PRINTFP("(%d) wrote %d/%d (%d, %d, %d)\n", (intptr_t) this, written, to_write, buf_it->size(), space, available);  
       
       if (written == 0) {
         // TODO - handle!!
