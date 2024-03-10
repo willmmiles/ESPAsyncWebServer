@@ -913,6 +913,9 @@ void AsyncWebSocketClient::text(AsyncWebSocketBuffer buffer)
 {
   _queueMessage(new AsyncWebSocketMultiMessage(std::move(buffer)));
 }
+void AsyncWebSocketClient::text(SharedBufferList buffers) {
+  _queueMessage(new AsyncWebSocketBufferListMessage(std::move(buffers)));
+}
 void AsyncWebSocketClient::text(AsyncWebSocketMessageBuffer* buffer)
 {
   if (!buffer) return;
@@ -1084,6 +1087,15 @@ void AsyncWebSocket::textAll(const char * message, size_t len){
   if ((!message) || (len ==0)) return;
   messageAll(AsyncWebSocketMultiMessage(SharedBuffer{message, len}));
 }
+
+void AsyncWebSocket::textAll(const SharedBufferList& buffers){
+  for(const auto& c: _clients){
+    if(c->status() == WS_CONNECTED){
+        c->text(buffers); // Makes copy of list for each client
+    }
+  }
+}
+
 
 void AsyncWebSocket::textAll(const AsyncWebSocketMessageBuffer* buffer){
   if (!buffer) return;
