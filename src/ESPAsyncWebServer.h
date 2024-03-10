@@ -212,7 +212,8 @@ class AsyncWebServerRequest {
     AsyncWebServerRequest(AsyncWebServer*, AsyncClient*);
     ~AsyncWebServerRequest();
 
-    AsyncClient* client(){ return _client; }
+    AsyncWebServer* server() { return _server; }
+    AsyncClient* client() { return _client; }
     uint8_t version() const { return _version; }
     WebRequestMethodComposite method() const { return _method; }
     const String& url() const { return _url; }

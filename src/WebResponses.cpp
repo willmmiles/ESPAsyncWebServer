@@ -229,6 +229,8 @@ void AsyncBasicResponse::_respond(AsyncWebServerRequest *request){
   _state = RESPONSE_CONTENT;
   // Call ack to send some data
   _ack(request, 0, 0);
+  // Pump the queue; any memory we need is now allocated
+  request->server()->processQueue();
 }
 
 size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
@@ -430,6 +432,9 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
         || (!_chunked && _writtenLength == (_headLength + _contentLength))) // non chunked mode, all data written
     {
       _state = RESPONSE_WAIT_ACK;
+      // We're done serializing, so hopefully we've released any locks
+      // Process the queue immediately
+      request->server()->processQueue();
     }
     return outLen;
 
