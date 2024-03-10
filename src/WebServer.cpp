@@ -128,9 +128,9 @@ void AsyncWebServer::_attachHandler(AsyncWebServerRequest *request){
 }
 
 
-AsyncCallbackWebHandler& AsyncWebServer::on(const char* uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest, ArUploadHandlerFunction onUpload, ArBodyHandlerFunction onBody){
+AsyncCallbackWebHandler& AsyncWebServer::on(String uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest, ArUploadHandlerFunction onUpload, ArBodyHandlerFunction onBody){
   AsyncCallbackWebHandler* handler = new AsyncCallbackWebHandler();
-  handler->setUri(uri);
+  handler->setUri(std::move(uri));
   handler->setMethod(method);
   handler->onRequest(onRequest);
   handler->onUpload(onUpload);
@@ -139,9 +139,9 @@ AsyncCallbackWebHandler& AsyncWebServer::on(const char* uri, WebRequestMethodCom
   return *handler;
 }
 
-AsyncCallbackWebHandler& AsyncWebServer::on(const char* uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest, ArUploadHandlerFunction onUpload){
+AsyncCallbackWebHandler& AsyncWebServer::on(String uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest, ArUploadHandlerFunction onUpload){
   AsyncCallbackWebHandler* handler = new AsyncCallbackWebHandler();
-  handler->setUri(uri);
+  handler->setUri(std::move(uri));
   handler->setMethod(method);
   handler->onRequest(onRequest);
   handler->onUpload(onUpload);
@@ -149,25 +149,25 @@ AsyncCallbackWebHandler& AsyncWebServer::on(const char* uri, WebRequestMethodCom
   return *handler;
 }
 
-AsyncCallbackWebHandler& AsyncWebServer::on(const char* uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest){
+AsyncCallbackWebHandler& AsyncWebServer::on(String uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest){
   AsyncCallbackWebHandler* handler = new AsyncCallbackWebHandler();
-  handler->setUri(uri);
+  handler->setUri(std::move(uri));
   handler->setMethod(method);
   handler->onRequest(onRequest);
   addHandler(handler);
   return *handler;
 }
 
-AsyncCallbackWebHandler& AsyncWebServer::on(const char* uri, ArRequestHandlerFunction onRequest){
+AsyncCallbackWebHandler& AsyncWebServer::on(String uri, ArRequestHandlerFunction onRequest){
   AsyncCallbackWebHandler* handler = new AsyncCallbackWebHandler();
-  handler->setUri(uri);
+  handler->setUri(std::move(uri));
   handler->onRequest(onRequest);
   addHandler(handler);
   return *handler;
 }
 
-AsyncStaticWebHandler& AsyncWebServer::serveStatic(const char* uri, fs::FS& fs, const char* path, const char* cache_control){
-  AsyncStaticWebHandler* handler = new AsyncStaticWebHandler(uri, fs, path, cache_control);
+AsyncStaticWebHandler& AsyncWebServer::serveStatic(String uri, fs::FS& fs, String path, const char* cache_control){
+  AsyncStaticWebHandler* handler = new AsyncStaticWebHandler(std::move(uri), fs, std::move(path), cache_control);
   addHandler(handler);
   return *handler;
 }

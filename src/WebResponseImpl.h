@@ -27,13 +27,14 @@
 #undef max
 #endif
 #include <vector>
+#include "default_init_allocator.h"
 // It is possible to restore these defines, but one can use _min and _max instead. Or std::min, std::max.
 
 class AsyncBasicResponse: public AsyncWebServerResponse {
   private:
     String _content;
   public:
-    AsyncBasicResponse(int code, const String& contentType=String(), const String& content=String());
+    AsyncBasicResponse(int code, String contentType=String(), String content=String());
     void _respond(AsyncWebServerRequest *request);
     size_t _ack(AsyncWebServerRequest *request, size_t len, uint32_t time);
     bool _sourceValid() const { return true; }
@@ -46,7 +47,7 @@ class AsyncAbstractResponse: public AsyncWebServerResponse {
     // This is inefficient with vector, but if we use some other container, 
     // we won't be able to access it as contiguous array of bytes when reading from it,
     // so by gaining performance in one place, we'll lose it in another.
-    std::vector<uint8_t> _cache;
+    std::vector<uint8_t, default_init_allocator<uint8_t>> _packet, _cache;
     size_t _readDataFromCacheOrContent(uint8_t* data, const size_t len);
     size_t _fillBufferAndProcessTemplates(uint8_t* buf, size_t maxLen);
   protected:

@@ -22,6 +22,18 @@
 #include "WebResponseImpl.h"
 #include "cbuf.h"
 
+#ifdef ASYNCWEBSERVER_DEBUG_TRACE
+#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]" fmt), millis(), ##__VA_ARGS__)
+#else
+#define DEBUG_PRINTFP(...)
+#endif
+
+#ifdef ESP8266
+#define GET_MAX_BLOCK_SIZE getMaxFreeBlockSize
+#else
+#define GET_MAX_BLOCK_SIZE getMaxAllocHeap
+#endif
+
 // Since ESP8266 does not link memchr by default, here's its implementation.
 void* memchr(void* ptr, int ch, size_t count)
 {
@@ -36,55 +48,55 @@ void* memchr(void* ptr, int ch, size_t count)
 /*
  * Abstract Response
  * */
-const char* AsyncWebServerResponse::_responseCodeToString(int code) {
+const __FlashStringHelper* AsyncWebServerResponse::_responseCodeToString(int code) {
   switch (code) {
-    case 100: return "Continue";
-    case 101: return "Switching Protocols";
-    case 200: return "OK";
-    case 201: return "Created";
-    case 202: return "Accepted";
-    case 203: return "Non-Authoritative Information";
-    case 204: return "No Content";
-    case 205: return "Reset Content";
-    case 206: return "Partial Content";
-    case 300: return "Multiple Choices";
-    case 301: return "Moved Permanently";
-    case 302: return "Found";
-    case 303: return "See Other";
-    case 304: return "Not Modified";
-    case 305: return "Use Proxy";
-    case 307: return "Temporary Redirect";
-    case 400: return "Bad Request";
-    case 401: return "Unauthorized";
-    case 402: return "Payment Required";
-    case 403: return "Forbidden";
-    case 404: return "Not Found";
-    case 405: return "Method Not Allowed";
-    case 406: return "Not Acceptable";
-    case 407: return "Proxy Authentication Required";
-    case 408: return "Request Time-out";
-    case 409: return "Conflict";
-    case 410: return "Gone";
-    case 411: return "Length Required";
-    case 412: return "Precondition Failed";
-    case 413: return "Request Entity Too Large";
-    case 414: return "Request-URI Too Large";
-    case 415: return "Unsupported Media Type";
-    case 416: return "Requested range not satisfiable";
-    case 417: return "Expectation Failed";
-    case 500: return "Internal Server Error";
-    case 501: return "Not Implemented";
-    case 502: return "Bad Gateway";
-    case 503: return "Service Unavailable";
-    case 504: return "Gateway Time-out";
-    case 505: return "HTTP Version not supported";
-    default:  return "";
+    case 100: return F("Continue");
+    case 101: return F("Switching Protocols");
+    case 200: return F("OK");
+    case 201: return F("Created");
+    case 202: return F("Accepted");
+    case 203: return F("Non-Authoritative Information");
+    case 204: return F("No Content");
+    case 205: return F("Reset Content");
+    case 206: return F("Partial Content");
+    case 300: return F("Multiple Choices");
+    case 301: return F("Moved Permanently");
+    case 302: return F("Found");
+    case 303: return F("See Other");
+    case 304: return F("Not Modified");
+    case 305: return F("Use Proxy");
+    case 307: return F("Temporary Redirect");
+    case 400: return F("Bad Request");
+    case 401: return F("Unauthorized");
+    case 402: return F("Payment Required");
+    case 403: return F("Forbidden");
+    case 404: return F("Not Found");
+    case 405: return F("Method Not Allowed");
+    case 406: return F("Not Acceptable");
+    case 407: return F("Proxy Authentication Required");
+    case 408: return F("Request Time-out");
+    case 409: return F("Conflict");
+    case 410: return F("Gone");
+    case 411: return F("Length Required");
+    case 412: return F("Precondition Failed");
+    case 413: return F("Request Entity Too Large");
+    case 414: return F("Request-URI Too Large");
+    case 415: return F("Unsupported Media Type");
+    case 416: return F("Requested range not satisfiable");
+    case 417: return F("Expectation Failed");
+    case 500: return F("Internal Server Error");
+    case 501: return F("Not Implemented");
+    case 502: return F("Bad Gateway");
+    case 503: return F("Service Unavailable");
+    case 504: return F("Gateway Time-out");
+    case 505: return F("HTTP Version not supported");
+    default:  return F("");
   }
 }
 
 AsyncWebServerResponse::AsyncWebServerResponse()
   : _code(0)
-  , _headers(LinkedList<AsyncWebHeader *>([](AsyncWebHeader *h){ delete h; }))
+  , _headers({})
   , _contentType()
   , _contentLength(0)
   , _sendContentLength(true)
@@ -95,8 +107,8 @@ AsyncWebServerResponse::AsyncWebServerResponse()
   , _writtenLength(0)
   , _state(RESPONSE_SETUP)
 {
-  for(auto header: DefaultHeaders::Instance()) {
-    _headers.add(new AsyncWebHeader(header->name(), header->value()));
+  for(auto& header: DefaultHeaders::Instance()) {
+    _headers.add(header);
   }
 }
 
@@ -119,39 +131,63 @@ void AsyncWebServerResponse::setContentType(const String& type){
     _contentType = type;
 }
 
-void AsyncWebServerResponse::addHeader(const String& name, const String& value){
-  _headers.add(new AsyncWebHeader(name, value));
+void AsyncWebServerResponse::addHeader(String name, String value){
+  _headers.add(AsyncWebHeader(std::move(name), std::move(value)));
 }
 
 String AsyncWebServerResponse::_assembleHead(uint8_t version){
-  if(version){
-    addHeader("Accept-Ranges","none");
-    if(_chunked)
-      addHeader("Transfer-Encoding","chunked");
+  // Precalculate the output header block length
+  size_t est_header_size = 10 + 4 + 2;  // HTTP://1.version code + newlines
+  est_header_size += strlen_P((const char*) _responseCodeToString(_code));
+  if(_sendContentLength) {
+    est_header_size += 18 + 10; // GBs ought to be enough for anyone
+  };
+  if (_contentType.length()) {
+    est_header_size += 16 + _contentType.length();
   }
+  if (version) {
+    est_header_size += 14 + 5 + 4;
+    if (_chunked) {
+      est_header_size += 18 + 8 + 4;
+    }
+  }
+  for(const auto& header: _headers) {
+    est_header_size += header.name().length() + header.value().length() + 4;
+  };
+
   String out = String();
-  int bufSize = 300;
+  out.reserve(est_header_size);
+  const static int bufSize = 300;
   char buf[bufSize];
 
-  snprintf(buf, bufSize, "HTTP/1.%d %d %s\r\n", version, _code, _responseCodeToString(_code));
+  snprintf_P(buf, bufSize, PSTR("HTTP/1.%d %d "), version, _code);
   out.concat(buf);
+  out.concat(_responseCodeToString(_code));
+  out.concat(F("\r\n"));
 
   if(_sendContentLength) {
-    snprintf(buf, bufSize, "Content-Length: %d\r\n", _contentLength);
+    snprintf_P(buf, bufSize, PSTR("Content-Length: %d\r\n"), _contentLength);
     out.concat(buf);
   }
   if(_contentType.length()) {
-    snprintf(buf, bufSize, "Content-Type: %s\r\n", _contentType.c_str());
+    snprintf_P(buf, bufSize, PSTR("Content-Type: %s\r\n"), _contentType.c_str());
     out.concat(buf);
   }
 
   for(const auto& header: _headers){
-    snprintf(buf, bufSize, "%s: %s\r\n", header->name().c_str(), header->value().c_str());
+    snprintf_P(buf, bufSize, PSTR("%s: %s\r\n"), header.name().c_str(), header.value().c_str());
     out.concat(buf);
   }
   _headers.free();
 
-  out.concat("\r\n");
+  if(version) {
+    out.concat(F("Accept-Ranges: none\r\n"));
+    if(_chunked) {
+      out.concat(F("Transfer-Encoding: chunked\r\n"));
+    }
+  }
+
+  out.concat(F("\r\n"));
   _headLength = out.length();
   return out;
 }
@@ -161,21 +197,21 @@ bool AsyncWebServerResponse::_finished() const { return _state > RESPONSE_WAIT_A
 bool AsyncWebServerResponse::_failed() const { return _state == RESPONSE_FAILED; }
 bool AsyncWebServerResponse::_sourceValid() const { return false; }
 void AsyncWebServerResponse::_respond(AsyncWebServerRequest *request){ _state = RESPONSE_END; request->client()->close(); }
-size_t AsyncWebServerResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){ return 0; }
+size_t AsyncWebServerResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){ (void)request; (void)len; (void)time; return 0; }
 
 /*
  * String/Code Response
  * */
-AsyncBasicResponse::AsyncBasicResponse(int code, const String& contentType, const String& content){
+AsyncBasicResponse::AsyncBasicResponse(int code, String contentType, String content){
   _code = code;
-  _content = content;
-  _contentType = contentType;
+  _content = std::move(content);
+  _contentType = std::move(contentType);
   if(_content.length()){
     _contentLength = _content.length();
     if(!_contentType.length())
-      _contentType = "text/plain";
+      _contentType = FPSTR(CONTENT_TYPE_PLAIN);
   }
-  addHeader("Connection","close");
+  addHeader(F("Connection"),F("close"));
 }
 
 void AsyncBasicResponse::_respond(AsyncWebServerRequest *request){
@@ -213,6 +249,7 @@ void AsyncBasicResponse::_respond(AsyncWebServerRequest *request){
 }
 
 size_t AsyncBasicResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
+  (void)time;
   _ackedLength += len;
   if(_state == RESPONSE_CONTENT){
     size_t available = _contentLength - _sentLength;
@@ -254,100 +291,141 @@ AsyncAbstractResponse::AsyncAbstractResponse(AwsTemplateProcessor callback): _ca
 }
 
 void AsyncAbstractResponse::_respond(AsyncWebServerRequest *request){
-  addHeader("Connection","close");
+  addHeader(F("Connection"),F("close"));
   _head = _assembleHead(request->version());
   _state = RESPONSE_HEADERS;
   _ack(request, 0, 0);
 }
 
+template<typename T>
+static void dealloc_vector(T& vec) {
+  vec = T{};  // move construct an empty vector; space will be freed when scope exits
+}
+
 size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
+  (void)time;
+  DEBUG_PRINTFP("(%d) ack %d\n", (intptr_t) this, len);
+
   if(!_sourceValid()){
     _state = RESPONSE_FAILED;
     request->client()->close();
     return 0;
   }
   _ackedLength += len;
-  size_t space = request->client()->space();
 
+  size_t space = request->client()->space();  // TCP window space available; NOT a guarantee we can actually send this much  
   size_t headLen = _head.length();
+  bool needs_send = false;
+
   if(_state == RESPONSE_HEADERS){
-    if(space >= headLen){
-      _state = RESPONSE_CONTENT;
-      space -= headLen;
-    } else {
-      String out = _head.substring(0, space);
-      _head = _head.substring(space);
-      _writtenLength += request->client()->write(out.c_str(), out.length());
-      return out.length();
+    auto headWritten = request->client()->add(_head.c_str(), std::min(space, headLen));
+    _writtenLength += headWritten;
+    if (headWritten < headLen) {
+      _head = _head.substring(headWritten);
+      request->client()->send();
+      return headWritten;
     }
+    _state = RESPONSE_CONTENT;
+    space -= headWritten;
+    _head = String(); // done      
+    needs_send = true;
   }
 
   if(_state == RESPONSE_CONTENT){
-    size_t outLen;
+    if (_packet.size()) {
+      // Complete the cached data
+      auto written = request->client()->add((const char*) _packet.data(), std::min(space, (size_t) _packet.size()));
+      _writtenLength += written;
+      _packet.erase(_packet.begin(), _packet.begin() + written);
+      space -= written;
+      if (_packet.size()) {
+        //  Couldn't queue the full cache
+        request->client()->send();
+        return written;
+      }
+      needs_send = true;
+    }
+
+    size_t outLen, readLen;
     if(_chunked){
       if(space <= 8){
-        return 0;
+        goto content_abort;
       }
       outLen = space;
     } else if(!_sendContentLength){
       outLen = space;
     } else {
-      outLen = ((_contentLength - _sentLength) > space)?space:(_contentLength - _sentLength);
+      outLen = std::min(space, _contentLength - _sentLength);
     }
-
-    uint8_t *buf = (uint8_t *)malloc(outLen+headLen);
-    if (!buf) {
-      // os_printf("_ack malloc %d failed\n", outLen+headLen);
-      return 0;
+#ifdef ESP8266
+    // Limit outlen based on available memory
+    // We require two packet buffers - one allocated here, and one belonging to the TCP stack
+    {      
+      auto old_space = _packet.capacity();
+      auto max_block_size = ESP.getMaxFreeBlockSize() - 128;
+      if ((old_space < outLen) || (outLen > max_block_size)) {
+        DEBUG_PRINTFP("(%d) Space adjustment, have %d, want %d, avail %d\n", (intptr_t)this, old_space, outLen, max_block_size);
+        do { 
+          dealloc_vector(_packet);
+          outLen = std::min(outLen, max_block_size);
+          _packet.resize(outLen);
+          max_block_size = ESP.getMaxFreeBlockSize() - 128;
+          DEBUG_PRINTFP("(%d) Checking %d vs %d\n", (intptr_t)this, outLen, max_block_size);
+        } while (max_block_size < outLen);
+      } else {
+        _packet.resize(outLen);
+      }
     }
-
-    if(headLen){
-      memcpy(buf, _head.c_str(), _head.length());
-    }
-
-    size_t readLen = 0;
-
-    if(_chunked){
+#else
+  _packet.resize(outLen);
+#endif
+    
+    if(_chunked){      
       // HTTP 1.1 allows leading zeros in chunk length. Or spaces may be added.
       // See RFC2616 sections 2, 3.6.1.
-      readLen = _fillBufferAndProcessTemplates(buf+headLen+6, outLen - 8);
+      readLen = _fillBufferAndProcessTemplates(_packet.data() + 6, outLen - 8);
       if(readLen == RESPONSE_TRY_AGAIN){
-          free(buf);
-          return 0;
+          _packet.clear();
+          goto content_abort;
       }
-      outLen = sprintf((char*)buf+headLen, "%x", readLen) + headLen;
-      while(outLen < headLen + 4) buf[outLen++] = ' ';
-      buf[outLen++] = '\r';
-      buf[outLen++] = '\n';
+      outLen = sprintf((char*)_packet.data(), "%x", readLen);
+      while(outLen < 4) _packet[outLen++] = ' ';
+      _packet[outLen++] = '\r';
+      _packet[outLen++] = '\n';
       outLen += readLen;
-      buf[outLen++] = '\r';
-      buf[outLen++] = '\n';
+      _packet[outLen++] = '\r';
+      _packet[outLen++] = '\n';
+      
     } else {
-      readLen = _fillBufferAndProcessTemplates(buf+headLen, outLen);
+      readLen = _fillBufferAndProcessTemplates(_packet.data(), _packet.size());
       if(readLen == RESPONSE_TRY_AGAIN){
-          free(buf);
-          return 0;
+          _packet.clear();
+          goto content_abort;
       }
-      outLen = readLen + headLen;
+      outLen = readLen;
+    }
+    _packet.resize(outLen);
+
+    if(_packet.size()){      
+        auto acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size());
+        _writtenLength += acceptedLen;
+        _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
+        if (acceptedLen < outLen) {
+          // Save the unsent block in cache
+          DEBUG_PRINTFP("(%d) Incomplete write, %d/%d\nHeap: %d/%d\nSpace:%d\n", (intptr_t) this, acceptedLen, outLen, ESP.GET_MAX_BLOCK_SIZE(), ESP.getFreeHeap(), request->client()->space());
+          // Try again, with less
+          acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size()/2);
+          _writtenLength += acceptedLen;
+          _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
+        }
+        DEBUG_PRINTFP("(%d) Accepted: %d\n", (intptr_t) this, acceptedLen);
+        if (_packet.size() == 0) dealloc_vector(_packet);
     }
 
-    if(headLen){
-        _head = String();
-    }
-
-    if(outLen){
-        _writtenLength += request->client()->write((const char*)buf, outLen);
-    }
-
-    if(_chunked){
-        _sentLength += readLen;
-    } else {
-        _sentLength += outLen - headLen;
-    }
-
-    free(buf);
-
-    if((_chunked && readLen == 0) || (!_sendContentLength && outLen == 0) || (!_chunked && _sentLength == _contentLength)){
+    if( (_chunked && readLen == 0)  // Chunked mode, no more data
+        || (!_sendContentLength && outLen == 0) // No content length, no more data
+        || (!_chunked && _writtenLength == (_headLength + _contentLength))) // non chunked mode, all data written
+    {
       _state = RESPONSE_WAIT_ACK;
     }
     return outLen;
@@ -360,6 +438,12 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     }
   }
   return 0;
+
+content_abort:  
+  if (needs_send) {
+    request->client()->send();
+  }
+  return 0;  
 }
 
 size_t AsyncAbstractResponse::_readDataFromCacheOrContent(uint8_t* data, const size_t len)
@@ -371,15 +455,22 @@ size_t AsyncAbstractResponse::_readDataFromCacheOrContent(uint8_t* data, const s
       _cache.erase(_cache.begin(), _cache.begin() + readFromCache);
     }
     // If we need to read more...
-    const size_t needFromFile = len - readFromCache;
-    const size_t readFromContent = _fillBuffer(data + readFromCache, needFromFile);
-    return readFromCache + readFromContent;
+    if (len > readFromCache) {
+      const size_t needFromFile = len - readFromCache;
+      const size_t readFromContent = _fillBuffer(data + readFromCache, needFromFile);
+      if (readFromContent != RESPONSE_TRY_AGAIN) {
+        _sentLength += readFromContent;
+        return readFromCache + readFromContent;
+      }
+      if (readFromCache == 0) return readFromContent;
+    } 
+    return readFromCache;
 }
 
 size_t AsyncAbstractResponse::_fillBufferAndProcessTemplates(uint8_t* data, size_t len)
 {
   if(!_callback)
-    return _fillBuffer(data, len);
+    return _readDataFromCacheOrContent(data, len);
 
   const size_t originalLen = len;
   len = _readDataFromCacheOrContent(data, len);
@@ -446,6 +537,7 @@ size_t AsyncAbstractResponse::_fillBufferAndProcessTemplates(uint8_t* data, size
         _cache.insert(_cache.begin(), &data[originalLen - (pTemplateStart + numBytesCopied - pTemplateEnd - 1)], &data[len]);
         //2. parameter value is longer than placeholder text, push the data after placeholder which not saved into cache further to the end
         memmove(pTemplateStart + numBytesCopied, pTemplateEnd + 1, &data[originalLen] - pTemplateStart - numBytesCopied);
+        len = originalLen; // fix issue with truncated data, not sure if it has any side effects
       } else if(pTemplateEnd + 1 != pTemplateStart + numBytesCopied)
         //2. Either parameter value is shorter than placeholder text OR there is enough free space in buffer to fit.
         //   Move the entire data after the placeholder
@@ -480,67 +572,26 @@ AsyncFileResponse::~AsyncFileResponse(){
 }
 
 void AsyncFileResponse::_setContentType(const String& path){
-  if (path.endsWith(".html")) _contentType = "text/html";
-  else if (path.endsWith(".htm")) _contentType = "text/html";
-  else if (path.endsWith(".css")) _contentType = "text/css";
-  else if (path.endsWith(".json")) _contentType = "application/json";
-  else if (path.endsWith(".js")) _contentType = "application/javascript";
-  else if (path.endsWith(".png")) _contentType = "image/png";
-  else if (path.endsWith(".gif")) _contentType = "image/gif";
-  else if (path.endsWith(".jpg")) _contentType = "image/jpeg";
-  else if (path.endsWith(".ico")) _contentType = "image/x-icon";
-  else if (path.endsWith(".svg")) _contentType = "image/svg+xml";
-  else if (path.endsWith(".eot")) _contentType = "font/eot";
-  else if (path.endsWith(".woff")) _contentType = "font/woff";
-  else if (path.endsWith(".woff2")) _contentType = "font/woff2";
-  else if (path.endsWith(".ttf")) _contentType = "font/ttf";
-  else if (path.endsWith(".xml")) _contentType = "text/xml";
-  else if (path.endsWith(".pdf")) _contentType = "application/pdf";
-  else if (path.endsWith(".zip")) _contentType = "application/zip";
-  else if(path.endsWith(".gz")) _contentType = "application/x-gzip";
-  else _contentType = "text/plain";
+  _contentType = contentTypeFor(path);
 }
 
-AsyncFileResponse::AsyncFileResponse(FS &fs, const String& path, const String& contentType, bool download, AwsTemplateProcessor callback): AsyncAbstractResponse(callback){
-  _code = 200;
-  _path = path;
-
-  if(!download && !fs.exists(_path) && fs.exists(_path+".gz")){
-    _path = _path+".gz";
-    addHeader("Content-Encoding", "gzip");
-    _callback = nullptr; // Unable to process zipped templates
-    _sendContentLength = true;
-    _chunked = false;
+static File fs_open_zipped(FS& fs, const String& path, bool force_absolute) {
+  if (!force_absolute && !fs.exists(path)) {
+    auto gz_path = path + "." + FPSTR(GZIP_EXTENSION);
+    if (fs.exists(gz_path)) return fs.open(gz_path, "r");
   }
+  return fs.open(path, "r");
+};
 
-  _content = fs.open(_path, "r");
-  _contentLength = _content.size();
-
-  if(contentType == "")
-    _setContentType(path);
-  else
-    _contentType = contentType;
-
-  int filenameStart = path.lastIndexOf('/') + 1;
-  char buf[26+path.length()-filenameStart];
-  char* filename = (char*)path.c_str() + filenameStart;
-
-  if(download) {
-    // set filename and force download
-    snprintf(buf, sizeof (buf), "attachment; filename=\"%s\"", filename);
-  } else {
-    // force rendering
-    snprintf(buf, sizeof (buf), "inline");
-  }
-  addHeader("Content-Disposition", buf);
-}
+AsyncFileResponse::AsyncFileResponse(FS &fs, const String& path, const String& contentType, bool download, AwsTemplateProcessor callback) 
+  : AsyncFileResponse(fs_open_zipped(fs, path, download), path, contentType, download, callback) {};
 
 AsyncFileResponse::AsyncFileResponse(File content, const String& path, const String& contentType, bool download, AwsTemplateProcessor callback): AsyncAbstractResponse(callback){
   _code = 200;
   _path = path;
 
-  if(!download && String(content.name()).endsWith(".gz") && !path.endsWith(".gz")){
-    addHeader("Content-Encoding", "gzip");
+  if(!download && String(content.name()).endsWith(FPSTR(GZIP_EXTENSION)) && !path.endsWith(FPSTR(GZIP_EXTENSION))){
+    addHeader(F("Content-Encoding"), F("gzip"));
     _callback = nullptr; // Unable to process gzipped templates
     _sendContentLength = true;
     _chunked = false;
@@ -549,7 +600,7 @@ AsyncFileResponse::AsyncFileResponse(File content, const String& path, const Str
   _content = content;
   _contentLength = _content.size();
 
-  if(contentType == "")
+  if(contentType.length() == 0)
     _setContentType(path);
   else
     _contentType = contentType;
@@ -559,11 +610,11 @@ AsyncFileResponse::AsyncFileResponse(File content, const String& path, const Str
   char* filename = (char*)path.c_str() + filenameStart;
 
   if(download) {
-    snprintf(buf, sizeof (buf), "attachment; filename=\"%s\"", filename);
+    snprintf_P(buf, sizeof (buf), PSTR("attachment; filename=\"%s\""), filename);
   } else {
-    snprintf(buf, sizeof (buf), "inline");
+    snprintf_P(buf, sizeof (buf), PSTR("inline"));
   }
-  addHeader("Content-Disposition", buf);
+  addHeader(F("Content-Disposition"), buf);
 }
 
 size_t AsyncFileResponse::_fillBuffer(uint8_t *data, size_t len){

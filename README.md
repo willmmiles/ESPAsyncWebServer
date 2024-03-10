@@ -1,7 +1,6 @@
-# ESPAsyncWebServer (Aircoookie Fork for WLED)
-[![Build Status](https://travis-ci.org/me-no-dev/ESPAsyncWebServer.svg?branch=master)](https://travis-ci.org/me-no-dev/ESPAsyncWebServer) ![](https://github.com/me-no-dev/ESPAsyncWebServer/workflows/ESP%20Async%20Web%20Server%20CI/badge.svg) [![Codacy Badge](https://api.codacy.com/project/badge/Grade/395dd42cfc674e6ca2e326af3af80ffc)](https://www.codacy.com/manual/me-no-dev/ESPAsyncWebServer?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=me-no-dev/ESPAsyncWebServer&amp;utm_campaign=Badge_Grade)
+# ESPAsyncWebServer (Fork for WLED)
+[![Build Status](https://travis-ci.org/willmmiles/ESPAsyncWebServer.svg?branch=master)](https://travis-ci.org/willmmiles/ESPAsyncWebServer) ![](https://github.com/willmmiles/ESPAsyncWebServer/workflows/ESP%20Async%20Web%20Server%20CI/badge.svg) [![Codacy Badge](https://api.codacy.com/project/badge/Grade/395dd42cfc674e6ca2e326af3af80ffc)](https://www.codacy.com/manual/willmmiles/ESPAsyncWebServer?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=willmmiles/ESPAsyncWebServer&amp;utm_campaign=Badge_Grade)
 
-For help and support [![Join the chat at https://gitter.im/me-no-dev/ESPAsyncWebServer](https://badges.gitter.im/me-no-dev/ESPAsyncWebServer.svg)](https://gitter.im/me-no-dev/ESPAsyncWebServer?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 Async HTTP and WebSocket Server for ESP8266 Arduino
 
@@ -89,6 +88,7 @@ To use this library you might need to have the latest git versions of [ESP32](ht
     - [Setup global and class functions as request handlers](#setup-global-and-class-functions-as-request-handlers)
     - [Methods for controlling websocket connections](#methods-for-controlling-websocket-connections)
     - [Adding Default Headers](#adding-default-headers)
+    - [Path variable](#path-variable)
 
 ## Installation
 
@@ -102,6 +102,7 @@ To use this library you might need to have the latest git versions of [ESP32](ht
    - [Instruction for Espressif 8266](http://docs.platformio.org/en/latest/platforms/espressif8266.html#using-arduino-framework-with-staging-version)
    - [Instruction for Espressif 32](http://docs.platformio.org/en/latest/platforms/espressif32.html#using-arduino-framework-with-staging-version)
  4. Add "ESP Async WebServer" to project using [Project Configuration File `platformio.ini`](http://docs.platformio.org/page/projectconf.html) and [lib_deps](http://docs.platformio.org/page/projectconf/section_env_library.html#lib-deps) option:
+
 ```ini
 [env:myboard]
 platform = espressif...
@@ -112,7 +113,7 @@ framework = arduino
 lib_deps = ESP Async WebServer
 
 # or using GIT Url (the latest development version)
-lib_deps = https://github.com/me-no-dev/ESPAsyncWebServer.git
+lib_deps = https://github.com/willmmiles/ESPAsyncWebServer.git
 ```
  5. Happy coding with PlatformIO!
 
@@ -1483,3 +1484,37 @@ webServer.onNotFound([](AsyncWebServerRequest *request) {
   }
 });
 ```
+
+### Path variable
+
+With path variable you can create a custom regex rule for a specific parameter in a route. 
+For example we want a `sensorId` parameter in a route rule to match only a integer.
+
+```cpp
+  server.on("^\\/sensor\\/([0-9]+)$", HTTP_GET, [] (AsyncWebServerRequest *request) {
+      String sensorId = request->pathArg(0);
+  });
+```
+*NOTE*: All regex patterns starts with `^` and ends with `$`
+
+To enable the `Path variable` support, you have to define the buildflag `-DASYNCWEBSERVER_REGEX`.
+
+
+For Arduino IDE create/update `platform.local.txt`:
+
+`Windows`: C:\Users\(username)\AppData\Local\Arduino15\packages\\`{espxxxx}`\hardware\\`espxxxx`\\`{version}`\platform.local.txt
+
+`Linux`: ~/.arduino15/packages/`{espxxxx}`/hardware/`{espxxxx}`/`{version}`/platform.local.txt
+
+Add/Update the following line:
+```
+  compiler.cpp.extra_flags=-DDASYNCWEBSERVER_REGEX
+```
+
+For platformio modify `platformio.ini`:
+```ini
+[env:myboard]
+build_flags = 
+  -DASYNCWEBSERVER_REGEX
+```
+*NOTE*: By enabling `ASYNCWEBSERVER_REGEX`, `<regex>` will be included. This will add an 100k to your binary.

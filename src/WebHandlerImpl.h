@@ -21,6 +21,10 @@
 #ifndef ASYNCWEBSERVERHANDLERIMPL_H_
 #define ASYNCWEBSERVERHANDLERIMPL_H_
 
+#include <string>
+#ifdef ASYNCWEBSERVER_REGEX
+#include <regex>
+#endif
 
 #include "stddef.h"
 #include <time.h>
@@ -44,7 +48,7 @@ class AsyncStaticWebHandler: public AsyncWebHandler {
     bool _gzipFirst;
     uint8_t _gzipStats;
   public:
-    AsyncStaticWebHandler(const char* uri, FS& fs, const char* path, const char* cache_control);
+    AsyncStaticWebHandler(String uri, FS& fs, String path, const char* cache_control);
     virtual bool canHandle(AsyncWebServerRequest *request) override final;
     virtual void handleRequest(AsyncWebServerRequest *request) override final;
     AsyncStaticWebHandler& setIsDir(bool isDir);
@@ -67,9 +71,13 @@ class AsyncCallbackWebHandler: public AsyncWebHandler {
     ArRequestHandlerFunction _onRequest;
     ArUploadHandlerFunction _onUpload;
     ArBodyHandlerFunction _onBody;
+    bool _isRegex;
   public:
-    AsyncCallbackWebHandler() : _uri(), _method(HTTP_ANY), _onRequest(NULL), _onUpload(NULL), _onBody(NULL){}
-    void setUri(const String& uri){ _uri = uri; }
+    AsyncCallbackWebHandler() : _uri(), _method(HTTP_ANY), _onRequest(NULL), _onUpload(NULL), _onBody(NULL), _isRegex(false) {}
+    void setUri(String uri){ 
+      _uri = std::move(uri); 
+      _isRegex = _uri.startsWith("^") && _uri.endsWith("$");
+    }
     void setMethod(WebRequestMethodComposite method){ _method = method; }
     void onRequest(ArRequestHandlerFunction fn){ _onRequest = fn; }
     void onUpload(ArUploadHandlerFunction fn){ _onUpload = fn; }
@@ -83,6 +91,27 @@ class AsyncCallbackWebHandler: public AsyncWebHandler {
       if(!(_method & request->method()))
         return false;
 
+#ifdef ASYNCWEBSERVER_REGEX
+      if (_isRegex) {
+        std::regex pattern(_uri.c_str());
+        std::smatch matches;
+        std::string s(request->url().c_str());
+        if(std::regex_search(s, matches, pattern)) {
+          for (size_t i = 1; i < matches.size(); ++i) { // start from 1
+            request->_addPathParam(matches[i].str().c_str());
+          }
+        } else {
+          return false;
+        }
+      } else 
+#endif
+      if (_uri.length() && _uri.startsWith("/*.")) {
+         String uriTemplate = String (_uri);
+         uriTemplate = uriTemplate.substring(uriTemplate.lastIndexOf("."));
+         if (!request->url().endsWith(uriTemplate))
+           return false;
+      }
+      else
       if (_uri.length() && _uri.endsWith("*")) {
         String uriTemplate = String(_uri);
 	uriTemplate = uriTemplate.substring(0, uriTemplate.length() - 1);
@@ -97,16 +126,22 @@ class AsyncCallbackWebHandler: public AsyncWebHandler {
     }
   
     virtual void handleRequest(AsyncWebServerRequest *request) override final {
+      if((_username != "" && _password != "") && !request->authenticate(_username.c_str(), _password.c_str()))
+        return request->requestAuthentication();
       if(_onRequest)
         _onRequest(request);
       else
         request->send(500);
     }
     virtual void handleUpload(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) override final {
+      if((_username != "" && _password != "") && !request->authenticate(_username.c_str(), _password.c_str()))
+        return request->requestAuthentication();
       if(_onUpload)
         _onUpload(request, filename, index, data, len, final);
     }
     virtual void handleBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) override final {
+      if((_username != "" && _password != "") && !request->authenticate(_username.c_str(), _password.c_str()))
+        return request->requestAuthentication();
       if(_onBody)
         _onBody(request, data, len, index, total);
     }
