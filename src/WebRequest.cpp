@@ -33,7 +33,7 @@ static const String SharedEmptyString = String();
 enum { PARSE_REQ_START, PARSE_REQ_HEADERS, PARSE_REQ_BODY, PARSE_REQ_END, PARSE_REQ_FAIL };
 
 #ifdef ASYNCWEBSERVER_DEBUG_TRACE
-#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]{%d}" fmt "\n"), millis(), ESP.getFreeHeap(), ##__VA_ARGS__)
+#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%u]{%d}" fmt "\n"), (unsigned) millis(), ESP.getFreeHeap(), ##__VA_ARGS__)
 #else
 #define DEBUG_PRINTFP(...)
 #endif
