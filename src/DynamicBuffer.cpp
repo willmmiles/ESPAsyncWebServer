@@ -8,11 +8,15 @@ namespace {
     // Inherit constructors
     using String::String;
     DynamicBufferString(String&& s) : String(std::move(s)) {};
-    DynamicBufferString(DynamicBuffer&& d) : String() {
+    DynamicBufferString(DynamicBuffer&& d) : String() {      
+      auto capacity = d.size() - 1;
+      auto buf = d.release();
+      auto len = strnlen(buf, capacity);
+      if (len == capacity) buf[len] = 0; // enforce null termination
       setSSO(false);
-      setCapacity(d.size() - 1);
-      setBuffer(d.release());
-      setLen(strlen(ptr.buff));
+      setBuffer(buf);
+      setCapacity(capacity);      
+      setLen(len);
     }
 
     // Special feature: releease the buffer to the caller without deallocating
