@@ -2,27 +2,50 @@
 #include <numeric>
 
 // Helper class - lets us move the buffer out of a String
-class ReleasableString : public String {
-  public:
-  // Inherit constructors
-  using String::String;
-  ReleasableString(String&& s) : String(std::move(s)) {};
+namespace {
+  class DynamicBufferString : public String {
+    public:
+    // Inherit constructors
+    using String::String;
+    DynamicBufferString(String&& s) : String(std::move(s)) {};
+    DynamicBufferString(DynamicBuffer&& d) : String() {      
+      auto capacity = d.size() - 1;
+      auto buf = d.release();
+      auto len = strnlen(buf, capacity);
+      if (len == capacity) buf[len] = 0; // enforce null termination
+      setSSO(false);
+      setBuffer(buf);
+      setCapacity(capacity);      
+      setLen(len);
+    }
 
-  // Special feature: releease the buffer to the caller without deallocating
-  char* release() {
-    if (isSSO()) return nullptr;
-    auto result = wbuffer();
-    init();
-    return result;
-  }
-};
+    // Special feature: releease the buffer to the caller without deallocating
+    char* release() {
+      if (isSSO()) return nullptr;
+      auto result = wbuffer();
+      init();
+      return result;
+    }
+  };
+}
 
 DynamicBuffer::DynamicBuffer(String&& s) : _data(nullptr), _len(s.length()) {
-  auto rb = ReleasableString(std::move(s));
+  auto rb = DynamicBufferString(std::move(s));
   _data = rb.release();
   if (!_data) {
     *this = DynamicBuffer(rb);  // use const-ref constructor to copy string
   }
+}
+
+DynamicBuffer::DynamicBuffer(const SharedBuffer& b) : DynamicBuffer(b.copy()) {};
+
+DynamicBuffer::DynamicBuffer(SharedBuffer&& b) : _data(nullptr), _len(0) {
+  if (b) *this = std::move(*b._buf);
+}
+
+String toString(DynamicBuffer buf) {  
+  auto dbstr = DynamicBufferString(std::move(buf));
+  return std::move(*static_cast<String*>(&dbstr));  // Move-construct the result string from dbstr
 }
 
 template<typename list_type>

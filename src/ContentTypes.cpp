@@ -7,7 +7,7 @@ static inline bool matches_p(const char* str, const char* progmem_str) {
 const __FlashStringHelper* contentTypeFor(const String& path) {
   // Find extension part of path
   auto idx = path.lastIndexOf('.');
-  if (idx < path.length()) {
+  if (idx >= 0) {
     auto ext_str = path.begin() + idx + 1;
 
     if (matches_p(ext_str, HTML_EXTENSION)) return FPSTR(CONTENT_TYPE_HTML);
