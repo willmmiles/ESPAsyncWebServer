@@ -91,6 +91,9 @@ SharedBufferList allocateSharedBufferList(size_t total, size_t max_buffer_size =
 size_t totalSize(const DynamicBufferList&);
 size_t totalSize(const SharedBufferList&);
 
+// Move-construct a SharedBufferList from a DynamicBufferList
+SharedBufferList sharedBufferListFromDynamic(DynamicBufferList&&);
+
 // Helper class - lets you stream something in to a DynamicBufferList, such as ArduinoJSON
 // If buffer size is nonzero, allocates additional buffers of buffer_size as required.
 template<typename list_type>

@@ -82,3 +82,11 @@ size_t totalSize(const DynamicBufferList& buffers) {
 size_t totalSize(const SharedBufferList& buffers) {
   return std::accumulate(buffers.begin(), buffers.end(), 0U, [](size_t s, const SharedBuffer& b) { return s + b.size(); });
 }
+
+SharedBufferList sharedBufferListFromDynamic(DynamicBufferList&& src) {
+  SharedBufferList rv;
+  for(auto& buf: src) {
+    rv.emplace_back(std::move(buf));
+  };
+  return rv;
+}
