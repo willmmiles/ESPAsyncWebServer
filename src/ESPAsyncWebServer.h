@@ -372,6 +372,7 @@ class AsyncWebServerResponse {
     size_t _writtenLength; // size of data written to client
     WebResponseState _state;
     static const __FlashStringHelper* _responseCodeToString(int code);
+    friend class AsyncWebServer;
 
   public:
     AsyncWebServerResponse();
@@ -440,6 +441,7 @@ class AsyncWebServer {
     void reset(); //remove all writers and handlers, with onNotFound/onFileUpload/onRequestBody 
 
     size_t queueLength() { return _requestQueue.length(); };
+    void dumpStatus();  // debug
   
     void _handleDisconnect(AsyncWebServerRequest *request);
     void _attachHandler(AsyncWebServerRequest *request);
