@@ -171,6 +171,23 @@ public:
     AsyncWebSocketMultiMessage* clone() const;  // Returns this message with a copy of the data buffer if required.
 };
 
+class AsyncWebSocketBufferListMessage: public AsyncWebSocketMessage {
+  private:
+    size_t _len;
+    size_t _attempted;
+    size_t _sent;
+    size_t _buf_sent;
+    size_t _ack;
+    size_t _acked;
+    std::list<AsyncWebSocketSharedBuffer> _data;
+public:
+    AsyncWebSocketBufferListMessage(std::list<AsyncWebSocketSharedBuffer> data, uint8_t opcode=WS_TEXT, bool mask=false);
+    virtual ~AsyncWebSocketBufferListMessage() override;
+    virtual bool betweenFrames() const override { return _acked == _ack; }
+    virtual void ack(size_t len, uint32_t time) override ;
+    virtual size_t send(AsyncClient *client) override ;
+};
+
 class AsyncWebSocketClient {
   private:
     AsyncClient *_client;
