@@ -195,6 +195,9 @@ class AsyncWebServerRequest {
     void _parsePlainPostChar(uint8_t data);
     void _parseMultipartPostByte(uint8_t data, bool last);
     void _addGetParams(const String& params);
+    
+    void _setupHandler();
+    void _onReady();  // called when the queue permits this request to run
 
     void _handleUploadStart();
     void _handleUploadByte(uint8_t data, bool last);
@@ -398,12 +401,14 @@ class AsyncWebServer {
   protected:
     AsyncServer _server;
     LinkedList<AsyncWebRewrite*> _rewrites;
-    LinkedList<AsyncWebHandler*> _handlers;
+    LinkedList<AsyncWebHandler*> _handlers;    
     AsyncCallbackWebHandler* _catchAllHandler;
+    LinkedList<AsyncWebServerRequest*> _requestQueue;
+    size_t _parallelRequests, _maxRequests;
 
   public:
-    AsyncWebServer(IPAddress addr, uint16_t port);
-    AsyncWebServer(uint16_t port);
+    AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelRequests = 0, size_t maxRequests = 0);
+    AsyncWebServer(uint16_t port, size_t parallelRequests = 0, size_t maxRequests = 0);
     ~AsyncWebServer();
 
     void begin();
@@ -433,10 +438,14 @@ class AsyncWebServer {
     void onRequestBody(ArBodyHandlerFunction fn); //handle posts with plain body content (JSON often transmitted this way as a request)
 
     void reset(); //remove all writers and handlers, with onNotFound/onFileUpload/onRequestBody 
+
+    size_t queueLength() { return _requestQueue.length(); };
   
     void _handleDisconnect(AsyncWebServerRequest *request);
     void _attachHandler(AsyncWebServerRequest *request);
     void _rewriteRequest(AsyncWebServerRequest *request);
+    bool _isQueued(AsyncWebServerRequest *request);
+    void _dequeue(AsyncWebServerRequest *request);
 };
 
 class DefaultHeaders {
