@@ -368,6 +368,96 @@ AsyncWebSocketMultiMessage* AsyncWebSocketMultiMessage::clone() const {
 
 
 /*
+ * AsyncWebSocketBufferListMessage Message
+ */
+
+AsyncWebSocketBufferListMessage::AsyncWebSocketBufferListMessage(std::list<AsyncWebSocketSharedBuffer> data, uint8_t opcode, bool mask)
+  :
+  _len(totalSize(data))
+  ,_attempted(0)
+  ,_sent(0)
+  ,_buf_sent(0)
+  ,_ack(0)
+  ,_acked(0)
+  ,_data(std::move(data))
+{
+  _opcode = opcode & 0x07;
+  _mask = mask;
+
+  if (_len) {
+    _status = WS_MSG_SENDING;
+    //ets_printf("M: %u\n", _len);
+  } else {
+    _status = WS_MSG_ERROR;
+  }
+} 
+
+
+AsyncWebSocketBufferListMessage::~AsyncWebSocketBufferListMessage() {
+}
+
+void AsyncWebSocketBufferListMessage::ack(size_t len, uint32_t time)  {
+  (void)time;
+  _acked += len;
+  if(_sent >= _len && _acked >= _ack){
+    _status = WS_MSG_SENT;
+  }
+  //ets_printf("A: %u\n", len);
+}
+
+size_t AsyncWebSocketBufferListMessage::send(AsyncClient *client)  {
+  if(_status != WS_MSG_SENDING)
+    return 0;
+  if(_acked < _ack){
+    return 0;
+  }
+  if(_sent == _len){
+    _status = WS_MSG_SENT;
+    return 0;
+  }
+  if(_sent > _len){
+      _status = WS_MSG_ERROR;
+      //ets_printf("E: %u > %u\n", _sent, _len);
+      return 0;
+  }
+  if (_sent < _attempted) {
+    // Frame was truncated
+    size_t sent = client->write(_data.front().data() + _sent, _attempted - _sent);
+    _ack += sent;
+    _sent += sent;
+    return sent;
+  }    
+
+  size_t toSend = _len - _sent;
+  size_t window = webSocketSendFrameWindow(client);
+
+  if(window < toSend) {
+      toSend = window;
+  }
+
+  _sent += toSend;
+  _ack += toSend + ((toSend < 126)?2:4) + (_mask * 4);
+
+  //ets_printf("W: %u %u\n", _sent - toSend, toSend);
+
+  bool final = (_sent == _len);
+  uint8_t* dPtr = (uint8_t*)(_WSbuffer.data() + (_sent - toSend));
+  uint8_t opCode = (toSend && _sent == toSend)?_opcode:(uint8_t)WS_CONTINUATION;
+
+  size_t sent = webSocketSendFrame(client, final, opCode, _mask, dPtr, toSend);
+  _status = WS_MSG_SENDING;
+  if(toSend && sent != toSend){
+      //ets_printf("E: %u != %u\n", toSend, sent);
+      _sent -= (toSend - sent);
+      _ack -= (toSend - sent);
+  }
+  //ets_printf("S: %u %u\n", _sent, sent);
+  return sent;
+}
+
+
+
+/*
  * Async WebSocket Client
  */
  const char * AWSC_PING_PAYLOAD = "awscPING";
