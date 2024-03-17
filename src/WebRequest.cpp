@@ -202,7 +202,7 @@ void AsyncWebServerRequest::_removeNotInterestingHeaders(){
 void AsyncWebServerRequest::_onPoll(){
   //os_printf("p\n");
   if (_parseState == PARSE_REQ_QUEUED) {
-    _server->_processQueue();
+    _server->processQueue();
   } else if(_response != NULL && _client != NULL && _client->canSend() && !_response->_finished()){
     _response->_ack(this, 0, 0);
   }
@@ -606,7 +606,7 @@ void AsyncWebServerRequest::_requestReady() {
     DEBUG_PRINTFP("(%d) WR handler ready %s", (intptr_t) this, url().c_str());
     if(_handler) {
       _parseState = PARSE_REQ_QUEUED;
-      _server->_processQueue();
+      _server->processQueue();
     }
     else {
       _parseState = PARSE_REQ_END;
