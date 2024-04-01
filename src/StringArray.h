@@ -40,7 +40,6 @@ class LinkedList {
   public:
     typedef Item<T> ItemType;
     typedef std::function<void(const T&)> OnRemove;
-    typedef std::function<bool(const T&)> Predicate;
   private:
     ItemType* _root;
     ItemType* _last;    
@@ -48,18 +47,11 @@ class LinkedList {
 
     class Iterator {
       ItemType* _node;
-      ItemType* _nextNode = nullptr;
       friend class LinkedList;
     public:
-      Iterator(ItemType* current = nullptr) : _node(current) {
-          _nextNode = _node != nullptr ? _node->next : nullptr;
-      }
-      Iterator(const Iterator& i) : _node(i._node) {
-          _nextNode = _node != nullptr ? _node->next : nullptr;
-      }
+      Iterator(ItemType* current = nullptr) : _node(current) {};
       Iterator& operator ++() {
-          _node = _nextNode;
-          _nextNode = _node != nullptr ? _node->next : nullptr;
+          if (_node) _node = _node->next;
           return *this;
       }
       bool operator != (const Iterator& i) const { return _node != i._node; }
@@ -68,23 +60,16 @@ class LinkedList {
     };
 
     void _remove(ItemType* pit, ItemType* it) {
-        if(pit == nullptr){ // item is root
-          _root = _root->next;
-          if (_root == nullptr) {
-            _last = nullptr;
-          }
-        } else {
-          pit->next = it->next;
-          if (it == _last) {
-            _last = pit;
-          }
-        }
-        
-        if (_onRemove) {
-          _onRemove(it->value());
-        }
-        
-        delete it;
+      auto* next = pit ? &pit->next : &_root;
+      *next = it->next;
+      if (_last == it) {
+        _last = pit;
+      }
+
+      if (_onRemove) {
+        _onRemove(it->value());
+      }
+      delete it;
     }
     
   public:
@@ -94,6 +79,7 @@ class LinkedList {
 
     LinkedList(OnRemove onRemove) : _root(nullptr), _last(nullptr), _onRemove(onRemove) {}
     ~LinkedList() { free(); }
+
     void add(T t){
       auto it = new ItemType(std::move(t));
       if(!_root){
@@ -104,6 +90,7 @@ class LinkedList {
       }
       _last = it;
     }
+
     T& front() const {
       return _root->value();
     }
@@ -111,95 +98,80 @@ class LinkedList {
     bool isEmpty() const {
       return _root == nullptr;
     }
+
     size_t length() const {
       size_t i = 0;
-      auto it = _root;
-      while(it){
-        i++;
-        it = it->next;
-      }
+      for(auto it = _root; it != nullptr; it = it->next) { ++i; };
       return i;
     }
-    size_t count_if(Predicate predicate) const {
+
+    template<typename Predicate>
+    size_t count_if(const Predicate& predicate) const {
       size_t i = 0;
-      auto it = _root;
-      while(it){
-        if (!predicate){
+      for(auto it = _root; it != nullptr; it = it->next) {
+        if (predicate(it->value())) {
           i++;
         }
-        else if (predicate(it->value())) {
-          i++;
-        }
-        it = it->next;
       }
       return i;
     }
+
     const T* nth(size_t N) const {
       size_t i = 0;
-      auto it = _root;
-      while(it){
-        if(i++ == N)
-          return &(it->value());
-        it = it->next;
-      }
+      for(auto it = _root; it != nullptr; it = it->next) {
+        if(i++ == N) return &(it->value());              
+      };
       return nullptr;
     }
+
     bool remove(const T& t){
-      auto it = _root;
-      auto pit = decltype(it) { nullptr };
-      while(it){
+      auto pit = (ItemType*) nullptr;
+      for(auto it = _root; it != nullptr; pit = it, it = it->next) {
         if(it->value() == t){
           _remove(pit, it);
           return true;
         }
-        pit = it;
-        it = it->next;
       }
       return false;
     }
-    bool remove_first(Predicate predicate){
-      auto it = _root;
-      auto pit = decltype(it) { nullptr };
-      while(it){
+    
+    template<typename Predicate>
+    bool remove_first(const Predicate& predicate){
+      auto pit = (ItemType*) nullptr;
+      for(auto it = _root; it != nullptr; pit = it, it = it->next) {
         if(predicate(it->value())){
           _remove(pit, it);
           return true;
         }
-        pit = it;
-        it = it->next;
       }
       return false;
     }
-    bool remove(const ConstIterator& t, const ConstIterator& where = ConstIterator(nullptr)) {
+
+    bool remove(const ConstIterator& t, const ConstIterator& where) {
       if (where._node) {
-        if ((where._nextNode) != t._node) return false;
+        if ((where._node->next) != t._node) return false;
         _remove(where._node, t._node);
         return true;
+      } else {
+        return remove(t);
       }
+    }
 
-      auto it = _root;
-      auto pit = decltype(it) { nullptr };
-      while(it){
+    bool remove(const ConstIterator& t) {
+      auto pit = (ItemType*) nullptr;
+      for(auto it = _root; it != nullptr; pit = it, it = it->next) {
         if(it == t._node){
           _remove(pit, it);
           return true;
         }
-        pit = it;
-        it = it->next;
       }
       return false;      
-    }    
+    }
+
     void free(){
       while(_root != nullptr){
-        auto it = _root;
-        _root = _root->next;
-        if (_onRemove) {
-          _onRemove(it->value());
-        }
-        delete it;
+        _remove(nullptr, _root);
       }
-      _root = nullptr;
-      _last = nullptr;
     }
 };
 
