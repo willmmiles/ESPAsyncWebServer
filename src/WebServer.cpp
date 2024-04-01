@@ -29,28 +29,48 @@ bool ON_AP_FILTER(AsyncWebServerRequest *request) {
   return WiFi.localIP() != request->client()->localIP();
 }
 
-AsyncWebServer::AsyncWebServer(uint16_t port)
-  : AsyncWebServer(IPADDR_ANY, port)
+AsyncWebServer::AsyncWebServer(uint16_t port, size_t parallelRequests, size_t maxRequests)
+  : AsyncWebServer(IPADDR_ANY, port, parallelRequests, maxRequests)
 {
 }
 
-AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port)
+AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelRequests, size_t maxRequests)
   : _server(addr, port)
-  , _rewrites(LinkedList<AsyncWebRewrite*>([](AsyncWebRewrite* r){ delete r; }))
-  , _handlers(LinkedList<AsyncWebHandler*>([](AsyncWebHandler* h){ delete h; }))
+  , _rewrites([](AsyncWebRewrite* r){ delete r; })
+  , _handlers([](AsyncWebHandler* h){ delete h; })
+  , _requestQueue(LinkedList<AsyncWebServerRequest*>::OnRemove {})
+  , _parallelRequests(parallelRequests)
+  , _maxRequests(maxRequests)
 {
   _catchAllHandler = new AsyncCallbackWebHandler();
   if(_catchAllHandler == NULL)
     return;
-  _server.onClient([](void *s, AsyncClient* c){
+  _server.onClient([this](void *s, AsyncClient* c){
     if(c == NULL)
       return;
     c->setRxTimeout(3);
+    
     AsyncWebServerRequest *r = new AsyncWebServerRequest((AsyncWebServer*)s, c);
     if(r == NULL){
       c->close(true);
       c->free();
       delete c;
+      return;
+    }
+
+    if (!_maxRequests || _requestQueue.length() < _maxRequests) {
+      _requestQueue.add(r);
+    } else {
+      // Immediately send a try-again-later response 
+      AsyncWebServerResponse *response = r->beginResponse(503);
+      if(!response){
+        c->close(true);
+        c->free();
+        delete c;
+        return;
+      } 
+      response->addHeader(F("Retry-After"), F("1"));
+      r->send(response);
     }
   }, this);
 }
@@ -195,3 +215,32 @@ void AsyncWebServer::reset(){
   }
 }
 
+bool AsyncWebServer::_isQueued(AsyncWebServerRequest *request){
+  if (!_parallelRequests) return false;
+  // Find ordinal of element in queue
+  auto it = _requestQueue.begin();
+  auto end = _requestQueue.end();
+  auto i = 0U;
+  while ((i < _parallelRequests) && (it != end)) {
+    if (*it == request) return false;
+    ++i, ++it;
+  }
+  return true;
+}
+
+void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
+  _requestQueue.remove(request);
+
+  // Start someone else, if need be
+  if (_parallelRequests) {
+    auto it = _requestQueue.begin();
+    auto end = _requestQueue.end();
+    auto i = 0U;
+    while ((i < _parallelRequests) && (it != end)) {
+      // Do something to tell the request it's OK to proceed
+      (*it)->_onReady();
+      ++i, ++it;
+    }
+  }
+
+}
