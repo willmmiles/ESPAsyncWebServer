@@ -410,9 +410,10 @@ class AsyncWebServer {
     LinkedList<AsyncWebHandler*> _handlers;    
     AsyncCallbackWebHandler* _catchAllHandler;
 #ifdef ASYNCWEBSERVER_NEEDS_MUTEX    
-    std::recursive_mutex _mutex;
+    std::mutex _mutex;
 #endif
     LinkedList<AsyncWebServerRequest*> _requestQueue;
+    bool _queueActive;
     
 
   public:
