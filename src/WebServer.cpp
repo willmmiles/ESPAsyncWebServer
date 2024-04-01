@@ -303,7 +303,11 @@ void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
   processQueue();
 }
 
-void AsyncWebServer::dumpStatus() {    
+void AsyncWebServer::dumpStatus() {
+  #ifdef ESP8266
+  // This can't be made safe - the printf_P() function permits yield.
+  return;
+  #endif
   guard();
   Serial.println(F("Web server status:"));
   auto end = _requestQueue.end();
