@@ -452,7 +452,7 @@ class AsyncWebServer {
     void processQueue();  // Attempt to execute any queued requests, if possible
     size_t queueLength() { return _requestQueue.length(); };
 
-    void dumpStatus();  // debug
+    void printStatus(Print&);  // Write queue status in human-readable format
   
     void _handleDisconnect(AsyncWebServerRequest *request);
     void _attachHandler(AsyncWebServerRequest *request);
