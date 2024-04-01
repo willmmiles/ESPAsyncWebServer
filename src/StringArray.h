@@ -60,23 +60,16 @@ class LinkedList {
     };
 
     void _remove(ItemType* pit, ItemType* it) {
-        if(pit == nullptr){ // item is root
-          _root = _root->next;
-          if (_root == nullptr) {
-            _last = nullptr;
-          }
-        } else {
-          pit->next = it->next;
-          if (it == _last) {
-            _last = pit;
-          }
-        }
-        
-        if (_onRemove) {
-          _onRemove(it->value());
-        }
-        
-        delete it;
+      auto* next = pit ? &pit->next : &_root;
+      *next = it->next;
+      if (_last == it) {
+        _last = pit;
+      }
+
+      if (_onRemove) {
+        _onRemove(it->value());
+      }
+      delete it;
     }
     
   public:
