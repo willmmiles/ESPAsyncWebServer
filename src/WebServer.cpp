@@ -21,10 +21,6 @@
 #include "ESPAsyncWebServer.h"
 #include "WebHandlerImpl.h"
 
-#ifndef ASYNCWEBSERVER_MINIMUM_HEAP
-#define ASYNCWEBSERVER_MINIMUM_HEAP 2048
-#endif
-
 #ifndef ASYNCWEBSERVER_MINIMUM_ALLOC
 #define ASYNCWEBSERVER_MINIMUM_ALLOC 1024
 #endif
@@ -60,23 +56,23 @@ static bool minimal_send_503(AsyncClient* c) {
 #define GET_MAX_BLOCK_SIZE getMaxAllocHeap
 #endif
 
-static bool heap_ok() {
-  return (ESP.getFreeHeap() > ASYNCWEBSERVER_MINIMUM_HEAP)
+static bool heap_ok(size_t minHeap) {
+  return (ESP.getFreeHeap() > minHeap)
     && (ESP.GET_MAX_BLOCK_SIZE() > ASYNCWEBSERVER_MINIMUM_ALLOC);
 }
 
-AsyncWebServer::AsyncWebServer(uint16_t port, size_t parallelRequests, size_t maxRequests)
-  : AsyncWebServer(IPADDR_ANY, port, parallelRequests, maxRequests)
+AsyncWebServer::AsyncWebServer(uint16_t port, size_t reqHeapUsage, size_t minHeap)
+  : AsyncWebServer(IPADDR_ANY, port, reqHeapUsage, minHeap)
 {
 }
 
-AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelRequests, size_t maxRequests)
+AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsage, size_t minHeap)
   : _server(addr, port)
   , _rewrites([](AsyncWebRewrite* r){ delete r; })
   , _handlers([](AsyncWebHandler* h){ delete h; })
   , _requestQueue(LinkedList<AsyncWebServerRequest*>::OnRemove {})
-  , _parallelRequests(parallelRequests)
-  , _maxRequests(maxRequests)
+  , _reqHeapUsage(reqHeapUsage)
+  , _minHeap(minHeap)
 {
   _catchAllHandler = new AsyncCallbackWebHandler();
   if(_catchAllHandler == NULL)
@@ -85,7 +81,7 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelReq
     if(c == NULL)
       return;
 
-    if (((_maxRequests > 0) && (_requestQueue.length() >= _maxRequests)) || !heap_ok()) {
+    if ((_minHeap > 0) && !heap_ok(_minHeap)) {
       // Don't even allocate anything we can avoid.  Tell the client we're in trouble with a static response.
       DEBUG_PRINTFP("**** Rejecting client %d: %d, %d\n", (intptr_t) c, _requestQueue.length(), ESP.getFreeHeap());
       c->setNoDelay(true);
@@ -249,41 +245,51 @@ void AsyncWebServer::reset(){
   }
 }
 
-bool AsyncWebServer::_isQueued(AsyncWebServerRequest *request){
-  if (!_parallelRequests) return false;
-  // Find ordinal of element in queue
-  auto it = _requestQueue.begin();
-  auto end = _requestQueue.end();
-  auto i = 0U;
-  while ((i < _parallelRequests) && (it != end)) {
-    if (*it == request) return false;
-    ++i, ++it;
+void AsyncWebServer::_processQueue() {  
+  // Consider the state of the requests in the queue.
+  // Requests in STATE_END have already been handled; we can assume any heap they need has already been allocated.
+  // Requests in STATE_QUEUED are pending.  Each iteration we consider the first one.
+  // We always allow one request, regardless of heap state.
+  {
+    size_t count = 0, active = 0, queued = 0;
+    for(auto element: _requestQueue) {
+      ++count;
+      if (element->_parseState == 100) ++active;
+      if (element->_parseState == 200) ++queued;
+    }
+    DEBUG_PRINTFP("Queue: %d entries, %d running, %d queued\n", count, active, queued);
   }
-  return true;
+
+  do { 
+    auto heap_ok = ESP.getFreeHeap() >= (_reqHeapUsage + _minHeap);    
+    bool active_entries = false;
+    AsyncWebServerRequest* next_queued_request = nullptr;
+    for(auto entry: _requestQueue) {
+      if (entry->_parseState == 100) {
+        active_entries = true;
+      } else if ((entry->_parseState == 200) && !next_queued_request) {
+        next_queued_request = entry;
+      };
+      if (next_queued_request && active_entries) break;  // no need to go further
+    }
+
+    if (next_queued_request && (heap_ok || !active_entries)) {
+      next_queued_request->_handleRequest();
+      continue; // process another entry
+    } 
+  } while(0); // as long as we have memory and queued requests.  TODO: some kind of limit
+
+  for(auto entry: _requestQueue) {
+    // Un-defer requests
+    if (entry->_parseState == 201) entry->_parseState = 200;
+  }
 }
 
 void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
+  DEBUG_PRINTFP("Removing %d from queue\n", (intptr_t) request);
   _requestQueue.remove(request);
-
-  // Start someone else, if need be
-  if (_parallelRequests) {
-    auto it = _requestQueue.begin();
-    auto end = _requestQueue.end();
-    auto i = 0U;
-    while ((i < _parallelRequests) && (it != end)) {
-      // Do something to tell the request it's OK to proceed
-      (*it)->_onReady();
-      ++i, ++it;
-    }
-  }
+  _processQueue();
 }
-
-void AsyncWebServer::_defer(AsyncWebServerRequest *request) {
-  // TODO: improve efficiency
-  _dequeue(request);
-  _requestQueue.add(request);
-}
-
 
 void AsyncWebServer::dumpStatus() {    
     Serial.println(F("Web server status:"));
