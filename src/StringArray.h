@@ -48,18 +48,11 @@ class LinkedList {
 
     class Iterator {
       ItemType* _node;
-      ItemType* _nextNode = nullptr;
       friend class LinkedList;
     public:
-      Iterator(ItemType* current = nullptr) : _node(current) {
-          _nextNode = _node != nullptr ? _node->next : nullptr;
-      }
-      Iterator(const Iterator& i) : _node(i._node) {
-          _nextNode = _node != nullptr ? _node->next : nullptr;
-      }
+      Iterator(ItemType* current = nullptr) : _node(current) {};
       Iterator& operator ++() {
-          _node = _nextNode;
-          _nextNode = _node != nullptr ? _node->next : nullptr;
+          if (_node) _node = _node->next;
           return *this;
       }
       bool operator != (const Iterator& i) const { return _node != i._node; }
@@ -172,7 +165,7 @@ class LinkedList {
     }
     bool remove(const ConstIterator& t, const ConstIterator& where = ConstIterator(nullptr)) {
       if (where._node) {
-        if ((where._nextNode) != t._node) return false;
+        if ((where._node->next) != t._node) return false;
         _remove(where._node, t._node);
         return true;
       }
