@@ -395,6 +395,20 @@ class AsyncWebServerResponse {
 };
 
 /*
+ * Queue limit structure for Server
+ * 
+ * Any value set to 0 indicates no limit.
+ * */
+struct AsyncWebServerQueueLimits {
+  // Count limits
+  size_t nParallel;   // Permit up to this number of active parallel requests.
+  size_t nMax;        // Permit up to this number of active + queued requests - send 503 otherwise.
+  // Heap limits  
+  size_t queueHeapRequired;     // Require at least this much free heap before queuing a new request, otherwise send a 503.
+  size_t requestHeapRequired;   // Require at least this much free heap before handling a new request, except if no requests are active.  
+};
+
+/*
  * SERVER :: One instance
  * */
 
@@ -404,7 +418,7 @@ typedef std::function<void(AsyncWebServerRequest *request, uint8_t *data, size_t
 
 class AsyncWebServer {
   protected:
-    size_t _reqHeapUsage, _minHeap;
+    AsyncWebServerQueueLimits _queueLimits;
     AsyncServer _server;
     LinkedList<AsyncWebRewrite*> _rewrites;
     LinkedList<AsyncWebHandler*> _handlers;    
@@ -417,8 +431,10 @@ class AsyncWebServer {
     
 
   public:
-    AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsage = 0, size_t minHeap = 0);
-    AsyncWebServer(uint16_t port, size_t reqHeapUsage = 0, size_t minHeap = 0);
+    AsyncWebServer(IPAddress addr, uint16_t port);
+    AsyncWebServer(uint16_t port);
+    AsyncWebServer(IPAddress addr, uint16_t port, const AsyncWebServerQueueLimits& limits);
+    AsyncWebServer(uint16_t port, const AsyncWebServerQueueLimits& limits);
     ~AsyncWebServer();
 
     void begin();
