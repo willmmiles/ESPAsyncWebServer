@@ -170,15 +170,8 @@ class LinkedList {
 
     void free(){
       while(_root != nullptr){
-        auto it = _root;
-        _root = _root->next;
-        if (_onRemove) {
-          _onRemove(it->value());
-        }
-        delete it;
+        _remove(nullptr, _root);
       }
-      _root = nullptr;
-      _last = nullptr;
     }
 };
 
