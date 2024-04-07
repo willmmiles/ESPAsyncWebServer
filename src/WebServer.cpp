@@ -310,7 +310,7 @@ void AsyncWebServer::reset(){
   }
 }
 
-void AsyncWebServer::processQueue() {  
+void AsyncWebServer::processQueue(){  
   // Consider the state of the requests in the queue.
   // Requests in STATE_END have already been handled; we can assume any heap they need has already been allocated.
   // Requests in STATE_QUEUED are pending.  Each iteration we consider the first one.
@@ -377,7 +377,12 @@ void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
   processQueue();
 }
 
-static char* append_vprintf_P(char* buf, char* end, const char* /*PROGMEM*/ fmt, ...) {
+void AsyncWebServer::setQueueLimits(const AsyncWebServerQueueLimits& limits) {
+  guard();
+  _queueLimits = limits;
+}
+
+static char* append_vprintf_P(char* buf, char* end, const char* /*PROGMEM*/ fmt, ...){
   va_list argp;
   va_start(argp, fmt);
   const auto max = end-buf;
@@ -386,7 +391,7 @@ static char* append_vprintf_P(char* buf, char* end, const char* /*PROGMEM*/ fmt,
   return (needed >= max) ? end-1 : buf + needed;
 }
 
-void AsyncWebServer::printStatus(Print& dest) {
+void AsyncWebServer::printStatus(Print& dest){
   char buf[1024];
   char* buf_p = buf;
   char* end = &buf[sizeof(buf)];

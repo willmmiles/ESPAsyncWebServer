@@ -429,7 +429,6 @@ class AsyncWebServer {
     LinkedList<AsyncWebServerRequest*> _requestQueue;
     bool _queueActive;
     
-
   public:
     AsyncWebServer(IPAddress addr, uint16_t port);
     AsyncWebServer(uint16_t port);
@@ -465,10 +464,12 @@ class AsyncWebServer {
 
     void reset(); //remove all writers and handlers, with onNotFound/onFileUpload/onRequestBody 
 
-    void processQueue();  // Attempt to execute any queued requests, if possible
+    // Queue interface
     size_t queueLength() { return _requestQueue.length(); };
-
+    const AsyncWebServerQueueLimits& getQueueLimits() { return _queueLimits; };
+    void setQueueLimits(const AsyncWebServerQueueLimits& limits);
     void printStatus(Print&);  // Write queue status in human-readable format
+    void processQueue();  // Consider the current queue state against the limits; may retry deferred handlers.
   
     void _handleDisconnect(AsyncWebServerRequest *request);
     void _attachHandler(AsyncWebServerRequest *request);
