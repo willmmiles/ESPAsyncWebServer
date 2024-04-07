@@ -465,7 +465,8 @@ class AsyncWebServer {
     void reset(); //remove all writers and handlers, with onNotFound/onFileUpload/onRequestBody 
 
     // Queue interface
-    size_t queueLength() { return _requestQueue.length(); };
+    size_t numClients();  // Number of active clients, active and pending
+    size_t queueLength(); // Number of queued clients
     const AsyncWebServerQueueLimits& getQueueLimits() { return _queueLimits; };
     void setQueueLimits(const AsyncWebServerQueueLimits& limits);
     void printStatus(Print&);  // Write queue status in human-readable format
