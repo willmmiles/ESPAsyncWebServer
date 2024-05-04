@@ -144,12 +144,12 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, const AsyncWebServ
       // Don't even allocate anything we can avoid.  Tell the client we're in trouble with a static response.
       DEBUG_PRINTFP("*** Rejecting client %d (%d): %d, %d\n", (intptr_t) c, c->getRemotePort(), _requestQueue.length(), ESP.getFreeHeap());
       c->setNoDelay(true);
-      c->onDisconnect([](void*r, AsyncClient* c){
-        DEBUG_PRINTFP("*** Client %d (%d) disconnected\n", (intptr_t)c, c->getRemotePort());
-        delete c;  // There is almost certainly something wrong with this - it's not OK to delete a function object while it's running
+      c->onDisconnect([](void*r, AsyncClient* rc){
+        DEBUG_PRINTFP("*** Client %d (%d) disconnected\n", (intptr_t)rc, rc->getRemotePort());
+        delete rc;  // There is almost certainly something wrong with this - it's not OK to delete a function object while it's running
       });
-      c->onAck([](void *, AsyncClient* c, size_t s, uint32_t ){  
-        c->close(true);        
+      c->onAck([](void *, AsyncClient* rc, size_t s, uint32_t ){  
+        rc->close(true);        
       });
       minimal_send_503(c);
       return;

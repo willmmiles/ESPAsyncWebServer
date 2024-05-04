@@ -38,9 +38,27 @@ enum { PARSE_REQ_START, PARSE_REQ_HEADERS, PARSE_REQ_BODY, PARSE_REQ_END=100, PA
 #define DEBUG_PRINTFP(...)
 #endif
 
-AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer* s, AsyncClient* c)
-  : _client(c)
-  , _server(s)
+// compatibility shim for old arduino cores
+#if !defined(ESP8266) && !defined(ESP_ARDUINO_VERSION_MAJOR)
+static bool concat(String& s, char* p, unsigned l) {
+  if (l == 0) return false;
+  s.reserve(s.length() + l);  
+  char end_c = p[l-1];
+  if (l > 1) {
+    p[l-1] = 0;
+    s.concat(p);
+    p[l-1] = end_c;
+  }
+  s.concat(end_c);  
+  return true;
+}
+#else
+static inline bool concat(String& s, char* p, unsigned l) { return s.concat(p, l); };
+#endif
+
+AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer* server, AsyncClient* client)
+  : _client(client)
+  , _server(server)
   , _handler(NULL)
   , _response(NULL)
   , _temp()
@@ -76,12 +94,12 @@ AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer* s, AsyncClient* c)
   , _tempObject(NULL)
 {
   DEBUG_PRINTFP("(%d) WR created", (intptr_t)this);
-  c->onError([](void *r, AsyncClient* c, int8_t error){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onError(error); }, this);
-  c->onAck([](void *r, AsyncClient* c, size_t len, uint32_t time){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onAck(len, time); }, this);
-  c->onDisconnect([](void *r, AsyncClient* c){ AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onDisconnect(); delete c; }, this);
-  c->onTimeout([](void *r, AsyncClient* c, uint32_t time){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onTimeout(time); }, this);
-  c->onData([](void *r, AsyncClient* c, void *buf, size_t len){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onData(buf, len); }, this);
-  c->onPoll([](void *r, AsyncClient* c){ (void)c; AsyncWebServerRequest *req = ( AsyncWebServerRequest*)r; req->_onPoll(); }, this);
+  _client->onError([](void *r, AsyncClient* c, int8_t error){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onError(error); }, this);
+  _client->onAck([](void *r, AsyncClient* c, size_t len, uint32_t time){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onAck(len, time); }, this);
+  _client->onDisconnect([](void *r, AsyncClient* c){ AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onDisconnect(); delete c; }, this);
+  _client->onTimeout([](void *r, AsyncClient* c, uint32_t time){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onTimeout(time); }, this);
+  _client->onData([](void *r, AsyncClient* c, void *buf, size_t len){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onData(buf, len); }, this);
+  _client->onPoll([](void *r, AsyncClient* c){ (void)c; AsyncWebServerRequest *req = ( AsyncWebServerRequest*)r; req->_onPoll(); }, this);
 }
 
 AsyncWebServerRequest::~AsyncWebServerRequest(){
@@ -112,32 +130,28 @@ AsyncWebServerRequest::~AsyncWebServerRequest(){
 }
 
 void AsyncWebServerRequest::_onData(void *buf, size_t len){
-  size_t i = 0;
+ 
   while (true) {
 
   if(_parseState < PARSE_REQ_BODY){
     // Find new line in buf
     char *str = (char*)buf;
-    for (i = 0; i < len; i++) {
-      if (str[i] == '\n') {
+    size_t nl_idx;
+    for (nl_idx = 0; nl_idx < len; nl_idx++) {
+      if (str[nl_idx] == '\n') {
         break;
       }
     }
-    if (i == len) { // No new line, just add the buffer in _temp
-      char ch = str[len-1];
-      str[len-1] = 0;
-      _temp.reserve(_temp.length()+len);
-      _temp.concat(str);
-      _temp.concat(ch);
+    if (nl_idx == len) { // No new line, just add the buffer in _temp
+      concat(_temp, str, len);
     } else { // Found new line - extract it and parse
-      str[i] = 0; // Terminate the string at the end of the line.
-      _temp.concat(str);
+      concat(_temp, str, nl_idx);
       _temp.trim();
       _parseLine();
-      if (++i < len) {
+      if (++nl_idx < len) {
         // Still have more buffer to process
-        buf = str+i;
-        len-= i;
+        buf = str+nl_idx;
+        len-= nl_idx;
         continue;
       }
     }
