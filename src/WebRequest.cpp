@@ -135,25 +135,22 @@ void AsyncWebServerRequest::_onData(void *buf, size_t len){
 
   if(_parseState < PARSE_REQ_BODY){
     // Find new line in buf
-    char *str = (char*)buf;
-    size_t nl_idx;
-    for (nl_idx = 0; nl_idx < len; nl_idx++) {
-      if (str[nl_idx] == '\n') {
-        break;
-      }
-    }
-    if (nl_idx == len) { // No new line, just add the buffer in _temp
-      concat(_temp, str, len);
-    } else { // Found new line - extract it and parse
-      concat(_temp, str, nl_idx);
+    char* str = (char*) buf;
+    char* nl = (char*) memchr(buf, '\n', len);
+    if (nl != nullptr) { // Found new line - extract it and parse
+      size_t line_len = nl - str;
+      concat(_temp, str, line_len);
       _temp.trim();
       _parseLine();
-      if (++nl_idx < len) {
+      if (++line_len+1 < len) {
         // Still have more buffer to process
-        buf = str+nl_idx;
-        len-= nl_idx;
+        buf = (void*) (str + line_len);
+        len -= line_len;
         continue;
       }
+    } else {
+      // No new line, just add the buffer in _temp
+      concat(_temp, str, len);
     }
   } else if(_parseState == PARSE_REQ_BODY){
     // A handler should be already attached at this point in _parseLine function.
