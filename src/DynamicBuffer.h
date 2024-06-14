@@ -217,7 +217,7 @@ class Walkable
 
   // Resize the underlying buffer storage, preserving contents
   // Returns new size on success, current size on failure.
-  size_t realloc(size_t s) {
+  size_t reallocate(size_t s) {
     if (s <= size()) {
       auto new_buf = buffer_type(data(), s);
       if (new_buf) {
