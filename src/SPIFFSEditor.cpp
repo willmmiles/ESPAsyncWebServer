@@ -272,17 +272,17 @@ const uint8_t edit_htm_gz[] PROGMEM = {
 
 // WEB HANDLER IMPLEMENTATION
 
-#ifdef ESP32
 SPIFFSEditor::SPIFFSEditor(const fs::FS& fs, const String& username, const String& password)
-#else
-SPIFFSEditor::SPIFFSEditor(const String& username, const String& password, const fs::FS& fs)
-#endif
 :_fs(fs)
 ,_username(username)
 ,_password(password)
 ,_authenticated(false)
 ,_startTime(0)
 {}
+
+#ifdef ESP8266
+SPIFFSEditor::SPIFFSEditor(const String& username, const String& password, const fs::FS& fs) : SPIFFSEditor(fs, username, password) {};
+#endif
 
 bool SPIFFSEditor::canHandle(AsyncWebServerRequest *request){
   if(request->url().equalsIgnoreCase(F("/edit"))){
