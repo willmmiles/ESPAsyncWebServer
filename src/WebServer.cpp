@@ -244,8 +244,14 @@ void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
       ++i, ++it;
     }
   }
-
 }
+
+void AsyncWebServer::_defer(AsyncWebServerRequest *request) {
+  // TODO: improve efficiency
+  _dequeue(request);
+  _requestQueue.add(request);
+}
+
 
 void AsyncWebServer::dumpStatus() {    
     Serial.println(F("Web server status:"));
