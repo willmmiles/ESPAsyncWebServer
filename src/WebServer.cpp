@@ -21,8 +21,30 @@
 #include "ESPAsyncWebServer.h"
 #include "WebHandlerImpl.h"
 
+#ifdef ASYNCWEBSERVER_DEBUG_TRACE
+#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]" fmt), millis(), ##__VA_ARGS__)
+#else
+#define DEBUG_PRINTFP(...)
+#endif
+
 #ifdef ASYNCWEBSERVER_NEEDS_MUTEX
-#define guard() const std::lock_guard<std::recursive_mutex> guard(_mutex)
+#ifdef DEBUG_GUARDS
+struct guard_type {
+  std::unique_lock<std::mutex> _lock;
+  size_t _line;
+  guard_type(std::mutex& m, size_t line) : _line(line) {
+    DEBUG_PRINTFP("acquire: %d\n", _line);
+    _lock = decltype(_lock) { m };  // defer construction
+  }
+  ~guard_type() {    
+    _lock.unlock();
+    DEBUG_PRINTFP("release: %d\n", _line);
+  }
+};
+#define guard() const guard_type guard(_mutex, __LINE__)
+#else
+#define guard() const std::lock_guard<std::mutex> guard(_mutex)
+#endif
 #else
 #define guard()
 #endif
@@ -35,12 +57,6 @@
 #define ASYNCWEBSERVER_MINIMUM_HEAP 2048
 #endif
 
-
-#ifdef ASYNCWEBSERVER_DEBUG_TRACE
-#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]" fmt), millis(), ##__VA_ARGS__)
-#else
-#define DEBUG_PRINTFP(...)
-#endif
 
 bool ON_STA_FILTER(AsyncWebServerRequest *request) {
   return WiFi.localIP() == request->client()->localIP();
@@ -93,6 +109,7 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsag
   , _rewrites([](AsyncWebRewrite* r){ delete r; })
   , _handlers([](AsyncWebHandler* h){ delete h; })
   , _requestQueue(LinkedList<AsyncWebServerRequest*>::OnRemove {})
+  , _queueActive(false)
 {
   _catchAllHandler = new AsyncCallbackWebHandler();
   if(_catchAllHandler == NULL)
@@ -133,6 +150,7 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsag
       delete c;
       return;
     }
+    
     guard();
     _requestQueue.add(r);
   }, this);
@@ -283,31 +301,42 @@ void AsyncWebServer::processQueue() {
   // Requests in STATE_END have already been handled; we can assume any heap they need has already been allocated.
   // Requests in STATE_QUEUED are pending.  Each iteration we consider the first one.
   // We always allow one request, regardless of heap state.
-  guard();
+#ifdef ASYNCWEBSERVER_DEBUG_TRACE
+  size_t count = 0, active = 0, queued = 0;
+#endif
+
+  {
+    guard();
+    if (_queueActive) return; // already in progress
+    _queueActive = true;
 
 #ifdef ASYNCWEBSERVER_DEBUG_TRACE
-  {
-    size_t count = 0, active = 0, queued = 0;
     for(auto element: _requestQueue) {
       ++count;
       if (element->_parseState == 100) ++active;
       if (element->_parseState == 200) ++queued;
     }
-    DEBUG_PRINTFP("Queue: %d entries, %d running, %d queued\n", count, active, queued);
+#endif    
   }
-#endif  
+
+  DEBUG_PRINTFP("Queue: %d entries, %d running, %d queued\n", count, active, queued);
 
   do { 
     auto heap_ok = ESP.getFreeHeap() >= (_reqHeapUsage + _minHeap);    
     bool active_entries = false;
     AsyncWebServerRequest* next_queued_request = nullptr;
-    for(auto entry: _requestQueue) {
-      if (entry->_parseState == 100) {
-        active_entries = true;
-      } else if ((entry->_parseState == 200) && !next_queued_request) {
-        next_queued_request = entry;
-      };
-      if (next_queued_request && active_entries) break;  // no need to go further
+
+    {
+      // Get a queued entry while holding the lock
+      guard();
+      for(auto entry: _requestQueue) {
+        if (entry->_parseState == 100) {
+          active_entries = true;
+        } else if ((entry->_parseState == 200) && !next_queued_request) {
+          next_queued_request = entry;
+        };
+        if (next_queued_request && active_entries) break;  // no need to go further
+      }
     }
 
     if (next_queued_request && (heap_ok || !active_entries)) {
@@ -316,33 +345,51 @@ void AsyncWebServer::processQueue() {
     } 
   } while(0); // as long as we have memory and queued requests.  TODO: some kind of limit
 
-  for(auto entry: _requestQueue) {
-    // Un-defer requests
-    if (entry->_parseState == 201) entry->_parseState = 200;
+  {
+    guard();
+    for(auto entry: _requestQueue) {
+      // Un-defer requests
+      if (entry->_parseState == 201) entry->_parseState = 200;
+    }
+    _queueActive = false;
   }
 }
 
 void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
-  guard();
-  DEBUG_PRINTFP("Removing %d from queue\n", (intptr_t) request);
-  _requestQueue.remove(request);
+  {
+    DEBUG_PRINTFP("Removing %d from queue\n", (intptr_t) request);
+    guard();    
+    _requestQueue.remove(request);
+  }
   processQueue();
 }
 
+static char* append_vprintf_P(char* buf, char* end, const char* /*PROGMEM*/ fmt, ...) {
+  va_list argp;
+  va_start(argp, fmt);
+  const auto max = end-buf;
+  const auto needed = vsnprintf_P(buf, max, fmt, argp);
+  va_end(argp);
+  return (needed >= max) ? end-1 : buf + needed;
+}
+
 void AsyncWebServer::dumpStatus() {
-  #ifdef ESP8266
-  // This can't be made safe - the printf_P() function permits yield.
-  return;
-  #endif
-  guard();
-  Serial.println(F("Web server status:"));
-  auto end = _requestQueue.end();
-  for(auto it = _requestQueue.begin(); it != end; ++it) {
-    Serial.printf_P(PSTR(" Request %d, state %d"), (intptr_t) *it, (*it)->_parseState);
-    if ((*it)->_response) {
-      auto r = (*it)->_response;
-      Serial.printf_P(PSTR(" -- Response %d, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
+  char buf[1024];
+  char* buf_p = buf;
+  char* end = &buf[sizeof(buf)];
+  buf[0] = 0;
+  {
+    guard();  
+    for(const auto& entry: _requestQueue) {
+      buf_p = append_vprintf_P(buf_p, end, PSTR(" Request %d, state %d"), (intptr_t) entry, entry->_parseState);
+      if (entry->_response) {
+        auto r = entry->_response;
+        buf_p = append_vprintf_P(buf_p, end, PSTR(" -- Response %d, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
+      }
+      buf_p = append_vprintf_P(buf_p, end, PSTR("\n"));
     }
-    Serial.println();
   }
+  buf[sizeof(buf)-1] = 0; // just in case
+  Serial.println(F("Web server status:"));
+  Serial.print(buf);
 }
