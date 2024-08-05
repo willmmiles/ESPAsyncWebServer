@@ -381,15 +381,18 @@ void AsyncWebServer::dumpStatus() {
   {
     guard();  
     for(const auto& entry: _requestQueue) {
-      buf_p = append_vprintf_P(buf_p, end, PSTR(" Request %d, state %d"), (intptr_t) entry, entry->_parseState);
+      buf_p = append_vprintf_P(buf_p, end, PSTR("\n- Request %d, state %d"), (intptr_t) entry, entry->_parseState);
       if (entry->_response) {
         auto r = entry->_response;
         buf_p = append_vprintf_P(buf_p, end, PSTR(" -- Response %d, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
       }
-      buf_p = append_vprintf_P(buf_p, end, PSTR("\n"));
     }
   }
   buf[sizeof(buf)-1] = 0; // just in case
-  Serial.println(F("Web server status:"));
-  Serial.print(buf);
+  Serial.print(F("Web server status:"));
+  if (buf[0]) {
+    Serial.println(buf);
+  } else {
+    Serial.println(F(" Idle"));
+  }
 }
