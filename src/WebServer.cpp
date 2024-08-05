@@ -31,6 +31,11 @@
 #define ASYNCWEBSERVER_MINIMUM_ALLOC 1024
 #endif
 
+#ifndef ASYNCWEBSERVER_MINIMUM_HEAP
+#define ASYNCWEBSERVER_MINIMUM_HEAP 2048
+#endif
+
+
 #ifdef ASYNCWEBSERVER_DEBUG_TRACE
 #define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]" fmt), millis(), ##__VA_ARGS__)
 #else
@@ -45,14 +50,23 @@ bool ON_AP_FILTER(AsyncWebServerRequest *request) {
   return WiFi.localIP() != request->client()->localIP();
 }
 
+
 static bool minimal_send_503(AsyncClient* c) {
-    const static char msg_progmem[] PROGMEM = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
-    char msg_stack[sizeof(msg_progmem)];  // stack, so we can pull it out of flash memory
-    memcpy_P(msg_stack, msg_progmem, sizeof(msg_stack));
-    auto w = c->write(msg_stack, sizeof(msg_stack)-1);
+    const static char msg[] PROGMEM = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
+#ifdef PROGMEM  
+    char msg_stack[sizeof(msg)];  // stack, so we can pull it out of flash memory
+    memcpy_P(msg_stack, msg, sizeof(msg));
+    #define MSG_503 msg_stack
+#else
+    #define MSG_503 msg
+#endif
+    auto w = c->write(MSG_503, sizeof(MSG_503)-1, ASYNC_WRITE_FLAG_COPY);
+
     // assume any nonzero value is success
-    DEBUG_PRINTFP("**** Sent 503 to %d, result %d\n", (intptr_t) c, w);
-    if (w != 0) { c->onAck([](void *, AsyncClient* c, size_t s, uint32_t ){  c->close(); }); }
+    DEBUG_PRINTFP("*** Sent 503 to %d (%d), result %d\n", (intptr_t) c, c->getRemotePort(), w);
+    if (w == 0) {    
+      c->close(true); // sorry bud, we're really that strapped for ram  
+    }
     return (w != 0);  
 }
 
@@ -87,14 +101,26 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsag
     if(c == NULL)
       return;
 
+    if (!heap_ok(ASYNCWEBSERVER_MINIMUM_HEAP)) {
+      // Protect ourselves from crashing - just abandon this request.
+      DEBUG_PRINTFP("*** Dropping client %d (%d): %d, %d\n", (intptr_t) c, c->getRemotePort(), _requestQueue.length(), ESP.getFreeHeap());
+      c->close(true);
+      delete c;
+      return;
+    }
+
     if ((_minHeap > 0) && !heap_ok(_minHeap)) {
       // Don't even allocate anything we can avoid.  Tell the client we're in trouble with a static response.
-      DEBUG_PRINTFP("**** Rejecting client %d: %d, %d\n", (intptr_t) c, _requestQueue.length(), ESP.getFreeHeap());
+      DEBUG_PRINTFP("*** Rejecting client %d (%d): %d, %d\n", (intptr_t) c, c->getRemotePort(), _requestQueue.length(), ESP.getFreeHeap());
       c->setNoDelay(true);
-      if (!minimal_send_503(c)) {
-        c->onPoll([](void *r, AsyncClient* c) { if (minimal_send_503(c)) c->onPoll(nullptr); });
-      }
-      c->onDisconnect([](void*r, AsyncClient* c){ DEBUG_PRINTFP("*** Client %d disconnected\n", (intptr_t)c);});
+      c->onDisconnect([](void*r, AsyncClient* c){
+        DEBUG_PRINTFP("*** Client %d (%d) disconnected\n", (intptr_t)c, c->getRemotePort());
+        delete c;  // There is almost certainly something wrong with this - it's not OK to delete a function object while it's running
+      });
+      c->onAck([](void *, AsyncClient* c, size_t s, uint32_t ){  
+        c->close(true);        
+      });
+      minimal_send_503(c);
       return;
     }
 
