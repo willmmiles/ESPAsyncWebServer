@@ -22,7 +22,7 @@
 #include "WebHandlerImpl.h"
 
 #ifdef ASYNCWEBSERVER_DEBUG_TRACE
-#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]" fmt), millis(), ##__VA_ARGS__)
+#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]" fmt), (unsigned) millis(), ##__VA_ARGS__)
 #else
 #define DEBUG_PRINTFP(...)
 #endif
