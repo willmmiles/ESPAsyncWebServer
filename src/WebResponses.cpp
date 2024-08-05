@@ -369,17 +369,17 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
         do { 
           dealloc_vector(_packet);
           outLen = std::min(outLen, max_block_size);
-          _packet.realloc(outLen);
+          _packet.reallocate(outLen);
           max_block_size = ESP.getMaxFreeBlockSize() - 128;
           DEBUG_PRINTFP("(%d) Checking %d vs %d\n", (intptr_t)this, outLen, max_block_size);
         } while (max_block_size < outLen);
       } else {
-        _packet.realloc(outLen);
+        _packet.reallocate(outLen);
       }
     }
 #else
     //Serial.printf("[%u] %d/%d -> %d\n", (unsigned) millis(),  ESP.getMaxAllocHeap(), ESP.getFreeHeap(), outLen);
-    _packet.realloc(outLen);
+    _packet.reallocate(outLen);
 #endif
     
     if(_chunked){      
