@@ -107,8 +107,8 @@ class AsyncWebSocketMessageBuffer {
     AsyncWebSocketMessageBuffer(DynamicBuffer b) : _buf(std::move(b)) {};
     ~AsyncWebSocketMessageBuffer() {};
 
-    void operator ++(int i) {};
-    void operator --(int i) {};
+    void operator ++(int) {};
+    void operator --(int) {};
     bool reserve(size_t size);
     void lock() {};
     void unlock() {};

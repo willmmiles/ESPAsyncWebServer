@@ -39,6 +39,10 @@
     {
       "name": "Hash",
       "platforms": "espressif8266"
+    },
+    {
+      "name": "LittleFS",
+      "platforms": "espressif8266"
     }
   ]
 }
