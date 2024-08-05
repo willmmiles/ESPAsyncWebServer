@@ -48,7 +48,8 @@ class DynamicBuffer {
   // Release the buffer without freeing it
   char* release() { char* temp = _data; _data = nullptr; _len = 0; return temp; }
 
-  // TODO, if it ever matters - resizing
+  // Resize the buffer.  Returns new size on success, current size on failure.
+  size_t resize(size_t);
 };
 
 // Same interface as DynamicBuffer, but with shared_ptr semantics: buffer is held until last copy releases it.
