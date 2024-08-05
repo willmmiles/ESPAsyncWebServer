@@ -41,6 +41,7 @@ class DynamicBuffer {
   // Accessors
   char* data() const { return _data; };
   size_t size() const { return _len; };
+  char& operator[](ptrdiff_t p) const { return *(_data + p); };
 
   explicit operator bool() const { return (_data != nullptr) && (_len > 0); }
 
@@ -67,6 +68,7 @@ class SharedBuffer {
 
   char* data() const { return _buf ? _buf->data() : nullptr; };
   size_t size() const { return _buf ? _buf->size() : 0U; };
+  char& operator[](ptrdiff_t p) const { return *(data() + p); };
   void clear() { _buf.reset(); };
 
   explicit operator bool() const { return _buf && *_buf; };
