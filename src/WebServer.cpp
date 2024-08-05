@@ -21,6 +21,12 @@
 #include "ESPAsyncWebServer.h"
 #include "WebHandlerImpl.h"
 
+#ifdef ASYNCWEBSERVER_NEEDS_MUTEX
+#define guard() const std::lock_guard<std::recursive_mutex> guard(_mutex)
+#else
+#define guard()
+#endif
+
 #ifndef ASYNCWEBSERVER_MINIMUM_ALLOC
 #define ASYNCWEBSERVER_MINIMUM_ALLOC 1024
 #endif
@@ -67,12 +73,12 @@ AsyncWebServer::AsyncWebServer(uint16_t port, size_t reqHeapUsage, size_t minHea
 }
 
 AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsage, size_t minHeap)
-  : _server(addr, port)
+  : _reqHeapUsage(reqHeapUsage)
+  , _minHeap(minHeap)
+  , _server(addr, port)
   , _rewrites([](AsyncWebRewrite* r){ delete r; })
   , _handlers([](AsyncWebHandler* h){ delete h; })
   , _requestQueue(LinkedList<AsyncWebServerRequest*>::OnRemove {})
-  , _reqHeapUsage(reqHeapUsage)
-  , _minHeap(minHeap)
 {
   _catchAllHandler = new AsyncCallbackWebHandler();
   if(_catchAllHandler == NULL)
@@ -101,6 +107,7 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsag
       delete c;
       return;
     }
+    guard();
     _requestQueue.add(r);
   }, this);
 }
@@ -250,6 +257,8 @@ void AsyncWebServer::processQueue() {
   // Requests in STATE_END have already been handled; we can assume any heap they need has already been allocated.
   // Requests in STATE_QUEUED are pending.  Each iteration we consider the first one.
   // We always allow one request, regardless of heap state.
+  guard();
+
   {
     size_t count = 0, active = 0, queued = 0;
     for(auto element: _requestQueue) {
@@ -286,20 +295,22 @@ void AsyncWebServer::processQueue() {
 }
 
 void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
+  guard();
   DEBUG_PRINTFP("Removing %d from queue\n", (intptr_t) request);
   _requestQueue.remove(request);
   processQueue();
 }
 
 void AsyncWebServer::dumpStatus() {    
-    Serial.println(F("Web server status:"));
-    auto end = _requestQueue.end();
-    for(auto it = _requestQueue.begin(); it != end; ++it) {
-      Serial.printf_P(PSTR(" Request %d, state %d"), (intptr_t) *it, (*it)->_parseState);
-      if ((*it)->_response) {
-        auto r = (*it)->_response;
-        Serial.printf_P(PSTR(" -- Response %d, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
-      }
-      Serial.println();
+  guard();
+  Serial.println(F("Web server status:"));
+  auto end = _requestQueue.end();
+  for(auto it = _requestQueue.begin(); it != end; ++it) {
+    Serial.printf_P(PSTR(" Request %d, state %d"), (intptr_t) *it, (*it)->_parseState);
+    if ((*it)->_response) {
+      auto r = (*it)->_response;
+      Serial.printf_P(PSTR(" -- Response %d, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
     }
+    Serial.println();
+  }
 }

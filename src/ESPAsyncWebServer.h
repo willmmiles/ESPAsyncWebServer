@@ -29,8 +29,10 @@
 #include "StringArray.h"
 
 #ifdef ESP32
+#include <mutex>
 #include <WiFi.h>
 #include <AsyncTCP.h>
+#define ASYNCWEBSERVER_NEEDS_MUTEX
 #elif defined(ESP8266)
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
@@ -402,12 +404,16 @@ typedef std::function<void(AsyncWebServerRequest *request, uint8_t *data, size_t
 
 class AsyncWebServer {
   protected:
+    size_t _reqHeapUsage, _minHeap;
     AsyncServer _server;
     LinkedList<AsyncWebRewrite*> _rewrites;
     LinkedList<AsyncWebHandler*> _handlers;    
     AsyncCallbackWebHandler* _catchAllHandler;
+#ifdef ASYNCWEBSERVER_NEEDS_MUTEX    
+    std::recursive_mutex _mutex;
+#endif
     LinkedList<AsyncWebServerRequest*> _requestQueue;
-    size_t _reqHeapUsage, _minHeap;
+    
 
   public:
     AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsage = 0, size_t minHeap = 0);
@@ -444,7 +450,7 @@ class AsyncWebServer {
 
     void processQueue();  // Attempt to execute any queued requests, if possible
     size_t queueLength() { return _requestQueue.length(); };
-    
+
     void dumpStatus();  // debug
   
     void _handleDisconnect(AsyncWebServerRequest *request);
