@@ -22,7 +22,17 @@
 #include "WebHandlerImpl.h"
 
 #ifndef ASYNCWEBSERVER_MINIMUM_HEAP
-#define ASYNCWEBSERVER_MINIMUM_HEAP 1536
+#define ASYNCWEBSERVER_MINIMUM_HEAP 2048
+#endif
+
+#ifndef ASYNCWEBSERVER_MINIMUM_ALLOC
+#define ASYNCWEBSERVER_MINIMUM_ALLOC 1024
+#endif
+
+#ifdef ASYNCWEBSERVER_DEBUG_TRACE
+#define DEBUG_PRINTFP(fmt, ...) Serial.printf_P(PSTR("[%d]" fmt), millis(), ##__VA_ARGS__)
+#else
+#define DEBUG_PRINTFP(...)
 #endif
 
 bool ON_STA_FILTER(AsyncWebServerRequest *request) {
@@ -31,6 +41,28 @@ bool ON_STA_FILTER(AsyncWebServerRequest *request) {
 
 bool ON_AP_FILTER(AsyncWebServerRequest *request) {
   return WiFi.localIP() != request->client()->localIP();
+}
+
+static bool minimal_send_503(AsyncClient* c) {
+    const static char msg_progmem[] PROGMEM = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
+    char msg_stack[sizeof(msg_progmem)];  // stack, so we can pull it out of flash memory
+    memcpy_P(msg_stack, msg_progmem, sizeof(msg_stack));
+    auto w = c->write(msg_stack, sizeof(msg_stack)-1);
+    // assume any nonzero value is success
+    DEBUG_PRINTFP("**** Sent 503 to %d, result %d\n", (intptr_t) c, w);
+    if (w != 0) { c->onAck([](void *, AsyncClient* c, size_t s, uint32_t ){  c->close(); }); }
+    return (w != 0);  
+}
+
+#ifdef ESP8266
+#define GET_MAX_BLOCK_SIZE getMaxFreeBlockSize
+#else
+#define GET_MAX_BLOCK_SIZE getMaxAllocHeap
+#endif
+
+static bool heap_ok() {
+  return (ESP.getFreeHeap() > ASYNCWEBSERVER_MINIMUM_HEAP)
+    && (ESP.GET_MAX_BLOCK_SIZE() > ASYNCWEBSERVER_MINIMUM_ALLOC);
 }
 
 AsyncWebServer::AsyncWebServer(uint16_t port, size_t parallelRequests, size_t maxRequests)
@@ -52,20 +84,20 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t parallelReq
   _server.onClient([this](void *s, AsyncClient* c){
     if(c == NULL)
       return;
-    c->setRxTimeout(3);
 
-    if (((_maxRequests > 0) && (_requestQueue.length() >= _maxRequests))
-        || (ESP.getFreeHeap() < ASYNCWEBSERVER_MINIMUM_HEAP))
-    {
+    if (((_maxRequests > 0) && (_requestQueue.length() >= _maxRequests)) || !heap_ok()) {
       // Don't even allocate anything we can avoid.  Tell the client we're in trouble with a static response.
-      c->onAck([](void *, AsyncClient* c, size_t , uint32_t ){  c->close(); });
-      const static char msg_progmem[] PROGMEM = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
-      char msg_stack[sizeof(msg_progmem)];  // stack, so we can pull it out of flash memory
-      memcpy_P(msg_stack, msg_progmem, sizeof(msg_stack));
-      c->write(msg_stack, sizeof(msg_stack));
+      DEBUG_PRINTFP("**** Rejecting client %d: %d, %d\n", (intptr_t) c, _requestQueue.length(), ESP.getFreeHeap());
+      c->setNoDelay(true);
+      if (!minimal_send_503(c)) {
+        c->onPoll([](void *r, AsyncClient* c) { if (minimal_send_503(c)) c->onPoll(nullptr); });
+      }
+      c->onDisconnect([](void*r, AsyncClient* c){ DEBUG_PRINTFP("*** Client %d disconnected\n", (intptr_t)c);});
       return;
     }
-    
+
+    c->setRxTimeout(3);
+
     AsyncWebServerRequest *r = new AsyncWebServerRequest((AsyncWebServer*)s, c);
     if(r == NULL){
       c->close(true);
