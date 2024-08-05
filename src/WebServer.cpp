@@ -259,6 +259,7 @@ void AsyncWebServer::processQueue() {
   // We always allow one request, regardless of heap state.
   guard();
 
+#ifdef ASYNCWEBSERVER_DEBUG_TRACE
   {
     size_t count = 0, active = 0, queued = 0;
     for(auto element: _requestQueue) {
@@ -268,6 +269,7 @@ void AsyncWebServer::processQueue() {
     }
     DEBUG_PRINTFP("Queue: %d entries, %d running, %d queued\n", count, active, queued);
   }
+#endif  
 
   do { 
     auto heap_ok = ESP.getFreeHeap() >= (_reqHeapUsage + _minHeap);    
