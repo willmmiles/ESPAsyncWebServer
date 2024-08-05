@@ -310,6 +310,18 @@ void AsyncWebServer::reset(){
   }
 }
 
+size_t AsyncWebServer::numClients(){
+  guard();
+  return _requestQueue.length();
+}
+
+size_t AsyncWebServer::queueLength(){
+  guard();
+  size_t count = 0U;
+  for(const auto& client: _requestQueue) { if (client->_parseState >= 200) ++count; };
+  return count;
+}
+
 void AsyncWebServer::processQueue(){  
   // Consider the state of the requests in the queue.
   // Requests in STATE_END have already been handled; we can assume any heap they need has already been allocated.
