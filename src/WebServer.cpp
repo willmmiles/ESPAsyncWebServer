@@ -97,14 +97,24 @@ static bool heap_ok(size_t minHeap) {
     && (ESP.GET_MAX_BLOCK_SIZE() > ASYNCWEBSERVER_MINIMUM_ALLOC);
 }
 
-AsyncWebServer::AsyncWebServer(uint16_t port, size_t reqHeapUsage, size_t minHeap)
-  : AsyncWebServer(IPADDR_ANY, port, reqHeapUsage, minHeap)
+AsyncWebServer::AsyncWebServer(uint16_t port)
+  : AsyncWebServer(IPADDR_ANY, port)
 {
 }
 
-AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsage, size_t minHeap)
-  : _reqHeapUsage(reqHeapUsage)
-  , _minHeap(minHeap)
+AsyncWebServer::AsyncWebServer(uint16_t port, const AsyncWebServerQueueLimits& limits)
+  : AsyncWebServer(IPADDR_ANY, port, limits)
+{
+}
+
+
+AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port)
+  : AsyncWebServer(addr, port, {0, 0, 0, 0})
+{
+}
+
+AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, const AsyncWebServerQueueLimits& limits)
+  : _queueLimits(limits)
   , _server(addr, port)
   , _rewrites([](AsyncWebRewrite* r){ delete r; })
   , _handlers([](AsyncWebHandler* h){ delete h; })
@@ -126,7 +136,11 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsag
       return;
     }
 
-    if ((_minHeap > 0) && !heap_ok(_minHeap)) {
+    guard();
+
+    if (((_queueLimits.queueHeapRequired > 0) && !heap_ok(_queueLimits.queueHeapRequired))
+       || ((_queueLimits.nMax > 0) && (_requestQueue.length() >= _queueLimits.nMax))
+    ) {
       // Don't even allocate anything we can avoid.  Tell the client we're in trouble with a static response.
       DEBUG_PRINTFP("*** Rejecting client %d (%d): %d, %d\n", (intptr_t) c, c->getRemotePort(), _requestQueue.length(), ESP.getFreeHeap());
       c->setNoDelay(true);
@@ -151,7 +165,7 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, size_t reqHeapUsag
       return;
     }
     
-    guard();
+    
     _requestQueue.add(r);
   }, this);
 }
@@ -322,8 +336,8 @@ void AsyncWebServer::processQueue() {
   DEBUG_PRINTFP("Queue: %d entries, %d running, %d queued\n", count, active, queued);
 
   do { 
-    auto heap_ok = ESP.getFreeHeap() >= (_reqHeapUsage + _minHeap);    
-    bool active_entries = false;
+    auto heap_ok = ESP.getFreeHeap() >= (_queueLimits.requestHeapRequired + _queueLimits.queueHeapRequired);
+    size_t active_entries = 0;
     AsyncWebServerRequest* next_queued_request = nullptr;
 
     {
@@ -331,19 +345,18 @@ void AsyncWebServer::processQueue() {
       guard();
       for(auto entry: _requestQueue) {
         if (entry->_parseState == 100) {
-          active_entries = true;
+          ++active_entries;
         } else if ((entry->_parseState == 200) && !next_queued_request) {
           next_queued_request = entry;
         };
-        if (next_queued_request && active_entries) break;  // no need to go further
       }
     }
 
-    if (next_queued_request && (heap_ok || !active_entries)) {
-      next_queued_request->_handleRequest();
-      continue; // process another entry
-    } 
-  } while(0); // as long as we have memory and queued requests.  TODO: some kind of limit
+    if (!next_queued_request) break;  // all done
+    if ((_queueLimits.nParallel > 0) && (active_entries >= _queueLimits.nParallel)) break; // lots running
+    if ((active_entries > 0) && (!heap_ok)) break;  // heap not ok    
+    next_queued_request->_handleRequest();
+  } while(1); // as long as we have memory and queued requests
 
   {
     guard();
