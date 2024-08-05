@@ -245,7 +245,7 @@ void AsyncWebServer::reset(){
   }
 }
 
-void AsyncWebServer::_processQueue() {  
+void AsyncWebServer::processQueue() {  
   // Consider the state of the requests in the queue.
   // Requests in STATE_END have already been handled; we can assume any heap they need has already been allocated.
   // Requests in STATE_QUEUED are pending.  Each iteration we consider the first one.
@@ -288,7 +288,7 @@ void AsyncWebServer::_processQueue() {
 void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
   DEBUG_PRINTFP("Removing %d from queue\n", (intptr_t) request);
   _requestQueue.remove(request);
-  _processQueue();
+  processQueue();
 }
 
 void AsyncWebServer::dumpStatus() {    

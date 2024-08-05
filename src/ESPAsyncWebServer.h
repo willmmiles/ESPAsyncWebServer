@@ -442,14 +442,15 @@ class AsyncWebServer {
 
     void reset(); //remove all writers and handlers, with onNotFound/onFileUpload/onRequestBody 
 
+    void processQueue();  // Attempt to execute any queued requests, if possible
     size_t queueLength() { return _requestQueue.length(); };
+    
     void dumpStatus();  // debug
   
     void _handleDisconnect(AsyncWebServerRequest *request);
     void _attachHandler(AsyncWebServerRequest *request);
     void _rewriteRequest(AsyncWebServerRequest *request);
-
-    void _processQueue();
+    
     void _dequeue(AsyncWebServerRequest *request);
     void _defer(AsyncWebServerRequest *request);
 };
