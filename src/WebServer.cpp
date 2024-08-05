@@ -411,7 +411,7 @@ void AsyncWebServer::printStatus(Print& dest){
   {
     guard();  
     for(const auto& entry: _requestQueue) {
-      buf_p = append_vprintf_P(buf_p, end, PSTR("\n- Request %X, state %d"), (intptr_t) entry, entry->_parseState);
+      buf_p = append_vprintf_P(buf_p, end, PSTR("\n- Request %X [%X], state %d"), (intptr_t) entry, (intptr_t) entry->_client, entry->_parseState);
       if (entry->_response) {
         auto r = entry->_response;
         buf_p = append_vprintf_P(buf_p, end, PSTR(" -- Response %X, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
