@@ -68,7 +68,7 @@ bool ON_AP_FILTER(AsyncWebServerRequest *request) {
 
 
 static bool minimal_send_503(AsyncClient* c) {
-    const static char msg[] PROGMEM = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
+    const static char msg[] PROGMEM = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n";
 #ifdef PROGMEM  
     char msg_stack[sizeof(msg)];  // stack, so we can pull it out of flash memory
     memcpy_P(msg_stack, msg, sizeof(msg));
@@ -151,7 +151,10 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, const AsyncWebServ
       c->onAck([](void *, AsyncClient* rc, size_t s, uint32_t ){  
         rc->close(true);        
       });
-      minimal_send_503(c);
+      c->onData([](void*, AsyncClient* rc, void*, size_t){
+        rc->onData({});
+        minimal_send_503(rc);        
+      });      
       return;
     }
 
