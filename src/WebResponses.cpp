@@ -18,6 +18,8 @@
   License along with this library; if not, write to the Free Software
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
+
+#include <string.h>
 #include "ESPAsyncWebServer.h"
 #include "WebResponseImpl.h"
 #include "cbuf.h"
@@ -35,16 +37,6 @@
 #endif
 // When looking up available memory, leave some slack
 #define BLOCK_SIZE_SLACK 128
-
-// Since ESP8266 does not link memchr by default, here's its implementation.
-void* memchr(void* ptr, int ch, size_t count)
-{
-  unsigned char* p = static_cast<unsigned char*>(ptr);
-  while(count--)
-    if(*p++ == static_cast<unsigned char>(ch))
-      return --p;
-  return nullptr;
-}
 
 
 /*
