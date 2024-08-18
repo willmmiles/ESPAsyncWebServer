@@ -33,6 +33,8 @@
 #else
 #define GET_MAX_BLOCK_SIZE getMaxAllocHeap
 #endif
+// When looking up available memory, leave some slack
+#define BLOCK_SIZE_SLACK 128
 
 // Since ESP8266 does not link memchr by default, here's its implementation.
 void* memchr(void* ptr, int ch, size_t count)
@@ -358,29 +360,25 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     } else {
       outLen = std::min(space, _contentLength - _sentLength);
     }
-#ifdef ESP8266
+
     // Limit outlen based on available memory
     // We require two packet buffers - one allocated here, and one belonging to the TCP stack
     {      
       auto old_space = _packet.capacity();
-      auto max_block_size = ESP.getMaxFreeBlockSize() - 128;
+      auto max_block_size = ESP.GET_MAX_BLOCK_SIZE() - BLOCK_SIZE_SLACK;
       if ((old_space < outLen) || (outLen > max_block_size)) {
         DEBUG_PRINTFP("(%d) Space adjustment, have %d, want %d, avail %d\n", (intptr_t)this, old_space, outLen, max_block_size);
         do { 
           dealloc_vector(_packet);
           outLen = std::min(outLen, max_block_size);
           _packet.reallocate(outLen);
-          max_block_size = ESP.getMaxFreeBlockSize() - 128;
+          max_block_size = ESP.GET_MAX_BLOCK_SIZE() - BLOCK_SIZE_SLACK;
           DEBUG_PRINTFP("(%d) Checking %d vs %d\n", (intptr_t)this, outLen, max_block_size);
         } while (max_block_size < outLen);
       } else {
         _packet.reallocate(outLen);
       }
     }
-#else
-    //Serial.printf("[%u] %d/%d -> %d\n", (unsigned) millis(),  ESP.getMaxAllocHeap(), ESP.getFreeHeap(), outLen);
-    _packet.reallocate(outLen);
-#endif
     
     if(_chunked){      
       // HTTP 1.1 allows leading zeros in chunk length. Or spaces may be added.
