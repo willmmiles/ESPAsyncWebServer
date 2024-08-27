@@ -8,6 +8,14 @@
 #include <list>
 #include <utility>
 
+#ifdef DYNAMICBUFFER_USE_PSRAM
+#define dynamicbuffer_alloc(x) heap_caps_malloc_prefer(x, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_INTERNAL)
+#define dynamicbuffer_free(x) heap_caps_free(x)
+#else
+#define dynamicbuffer_alloc(x) malloc(x)
+#define dynamicbuffer_free(x) free(x)
+#endif
+
 // Forward declaration
 class SharedBuffer;
 
@@ -237,3 +245,6 @@ class Walkable
     return _buf.size();
   }
 };
+
+#undef dynamicbuffer_malloc
+#undef dynamicbuffer_free
