@@ -30,14 +30,6 @@
 #define DEBUG_PRINTFP(...)
 #endif
 
-#ifdef ESP8266
-#define GET_MAX_BLOCK_SIZE getMaxFreeBlockSize
-#else
-#define GET_MAX_BLOCK_SIZE getMaxAllocHeap
-#endif
-// When looking up available memory, leave some slack
-#define BLOCK_SIZE_SLACK 128
-
 
 /*
  * Abstract Response
@@ -291,14 +283,40 @@ void AsyncAbstractResponse::_respond(AsyncWebServerRequest *request){
   _ack(request, 0, 0);
 }
 
-template<typename T>
-static void dealloc_vector(T& vec) {
-  vec = T{};  // move construct an empty vector; space will be freed when scope exits
+
+static size_t _max_heap_alloc() {
+  auto result = 
+#ifdef ESP8266
+    ESP.getMaxFreeBlockSize()
+#else
+    // ESP.getMaxAllocHeap() does not accurately reflect the behavior of malloc()
+    // as it is missing the 'MALLOC_CAP_DEFAULT' flag.
+    heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT)
+#endif
+    - 128;  // fudge factor
+  
+  return result;
+}
+
+static DynamicBuffer _safe_allocate_buffer(size_t outLen) {   
+  // Espressif lwip configuration always copies in to the TCP stack, so 
+  // we have to have enough room to allocate the copy buffer.  It's too bad we
+  // can't re-use our assembly buffer, but it is what it is.
+  auto rv = DynamicBuffer(outLen);
+  if (outLen > TCP_MSS) {
+    // Validate that there's enough space to allocate the copy buffer
+    if (!rv || (_max_heap_alloc() < outLen)) {
+        // Try allocating a single packet's worth instead
+        rv.clear();
+        rv.resize(TCP_MSS);
+    }
+  }
+  return rv;
 }
 
 size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
   (void)time;
-  DEBUG_PRINTFP("(%d) ack %d\n", (intptr_t) this, len);
+  DEBUG_PRINTFP("(%08x) ack %d\n", (intptr_t) this, len);
 
   if(!_sourceValid()){
     _state = RESPONSE_FAILED;
@@ -307,16 +325,17 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
   }
   _ackedLength += len;
 
-  size_t space = request->client()->space();  // TCP window space available; NOT a guarantee we can actually send this much  
-  size_t headLen = _head.length();
+  size_t space = request->client()->space();  // TCP window space available; NOT a guarantee we can actually send this much    
   bool needs_send = false;
   if ((space == 0) && ((_state == RESPONSE_HEADERS) || (_state == RESPONSE_CONTENT))) {
     // Cannot accept more data now, wait for next event    
-    DEBUG_PRINTFP("(%d) No space to write\n", (intptr_t)this);
+    DEBUG_PRINTFP("(%08x)NS\n", (intptr_t)this);
     return 0;
   }
 
   if(_state == RESPONSE_HEADERS){
+    // FUTURE: we could replace _head with _packet
+    size_t headLen = _head.length();
     auto headWritten = request->client()->add(_head.c_str(), std::min(space, headLen));
     _writtenLength += headWritten;
     if (headWritten < headLen) {
@@ -339,14 +358,15 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
       space -= written;
       if (_packet.size()) {
         //  Couldn't queue the full cache
-        DEBUG_PRINTFP("(%d) Partial buffered write: wrote %d, remaining %d\n", (intptr_t)this, written, _packet.size());
+        DEBUG_PRINTFP("(%08x)PBW %d,%d\n", (intptr_t)this, written, _packet.size());
         if (written) request->client()->send();
         return written;
       }
+      _packet = {};
       needs_send = true;
     }
-    _packet.reset();
-
+    assert(_packet.capacity() == 0);  // no buffer is allocated
+    
     size_t outLen, readLen;
     if(_chunked){
       if(space <= 8){
@@ -361,27 +381,16 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
 
     // Limit outlen based on available memory
     // We require two packet buffers - one allocated here, and one belonging to the TCP stack
-    {      
-      auto old_space = _packet.capacity();
-      auto max_block_size = ESP.GET_MAX_BLOCK_SIZE() - BLOCK_SIZE_SLACK;
-      if ((old_space < outLen) || (outLen > max_block_size)) {
-        DEBUG_PRINTFP("(%d) Space adjustment, have %d, want %d, avail %d\n", (intptr_t)this, old_space, outLen, max_block_size);
-        do { 
-          dealloc_vector(_packet);
-          outLen = std::min(outLen, max_block_size);
-          _packet.reallocate(outLen);
-          max_block_size = ESP.GET_MAX_BLOCK_SIZE() - BLOCK_SIZE_SLACK;
-          DEBUG_PRINTFP("(%d) Checking %d vs %d\n", (intptr_t)this, outLen, max_block_size);
-        } while (max_block_size < outLen);
-      } else {
-        _packet.reallocate(outLen);
-      }
-    }
+    _packet = _safe_allocate_buffer(outLen);
     
-    if(_chunked){      
+    if(_chunked){
+      if (_packet.size() < 8) {
+        _packet.clear();
+        goto content_abort;
+      }      
       // HTTP 1.1 allows leading zeros in chunk length. Or spaces may be added.
       // See RFC2616 sections 2, 3.6.1.
-      readLen = _fillBufferAndProcessTemplates((uint8_t*) (_packet.data() + 6), outLen - 8);
+      readLen = _fillBufferAndProcessTemplates((uint8_t*) (_packet.data() + 6), _packet.size() - 8);
       if(readLen == RESPONSE_TRY_AGAIN){
           _packet.clear();
           goto content_abort;
@@ -408,15 +417,15 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
         _writtenLength += acceptedLen;
         _packet.advance(acceptedLen);
         if (acceptedLen < outLen) {
-          // Save the unsent block in cache
-          DEBUG_PRINTFP("(%d) Incomplete write, %d/%d\nHeap: %d/%d\nSpace:%d\n", (intptr_t) this, acceptedLen, outLen, ESP.GET_MAX_BLOCK_SIZE(), ESP.getFreeHeap(), request->client()->space());
-          // Try again, with less
-          acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size()/2);
+          DEBUG_PRINTFP("(%08x)IW%d/%d\nH:%d/%d\nS:%d\n", (intptr_t) this, acceptedLen, outLen, _max_heap_alloc(), ESP.getFreeHeap(), request->client()->space());
+          // Try again, with less.
+          acceptedLen = request->client()->write((const char*)_packet.data(), std::min(outLen/2, (size_t)TCP_MSS));
           _writtenLength += acceptedLen;
           _packet.advance(acceptedLen);
         }
-        DEBUG_PRINTFP("(%d) Accepted: %d\n", (intptr_t) this, acceptedLen);
-        if (_packet.size() == 0) dealloc_vector(_packet);
+        // Data we couldn't send is held in _packet
+        DEBUG_PRINTFP("(%08x)AL%d %d\n", (intptr_t) this, acceptedLen, _packet.size());
+        if (_packet.size() == 0) _packet = {};  // release buffer
     }
 
     if( (_chunked && readLen == 0)  // Chunked mode, no more data
