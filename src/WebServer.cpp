@@ -50,11 +50,22 @@ struct guard_type {
 #endif
 
 #ifndef ASYNCWEBSERVER_MINIMUM_ALLOC
+#ifdef ESP8266
 #define ASYNCWEBSERVER_MINIMUM_ALLOC 1024
+#else
+#define ASYNCWEBSERVER_MINIMUM_ALLOC 4096
+#endif
 #endif
 
 #ifndef ASYNCWEBSERVER_MINIMUM_HEAP
+#ifdef ESP8266
 #define ASYNCWEBSERVER_MINIMUM_HEAP 2048
+#else /* ESP32 */
+// This is a *vastly* larger number.  The ESP32 TCP stack does a *ton* of dynamic
+// allocation in the cricital path; and if we OOM the stack, it hangs up connections,
+// leaking bits and pieces and leaving the available memory fragmented.
+#define ASYNCWEBSERVER_MINIMUM_HEAP 8192
+#endif
 #endif
 
 
@@ -79,7 +90,7 @@ static bool minimal_send_503(AsyncClient* c) {
     auto w = c->write(MSG_503, sizeof(MSG_503)-1, ASYNC_WRITE_FLAG_COPY);
 
     // assume any nonzero value is success
-    DEBUG_PRINTFP("*** Sent 503 to %d (%d), result %d\n", (intptr_t) c, c->getRemotePort(), w);
+    DEBUG_PRINTFP("*** Sent 503 to %08X (%d), result %d\n", (intptr_t) c, c->getRemotePort(), w);
     if (w == 0) {    
       c->close(true); // sorry bud, we're really that strapped for ram  
     }
@@ -87,15 +98,26 @@ static bool minimal_send_503(AsyncClient* c) {
 }
 
 #ifdef ESP8266
-#define GET_MAX_BLOCK_SIZE getMaxFreeBlockSize
+static inline size_t get_heap_available() {
+  return ESP.getFreeHeap();
+}
+
+static inline size_t get_heap_alloc() {
+  return ESP.getMaxFreeBlockSize();
+}
 #else
-#define GET_MAX_BLOCK_SIZE getMaxAllocHeap
+// Platform functions don't correctly check for malloc()'s heap; at least on ESP32-WROVER 
+// they incorrectly include some internal memory that is not accessible to malloc().
+// Reimplement using the correct MALLOC_CAPs.
+static inline size_t get_heap_available() {
+  return heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT);
+}
+
+static inline size_t get_heap_alloc() {
+  return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT);
+}
 #endif
 
-static bool heap_ok(size_t minHeap) {
-  return (ESP.getFreeHeap() > minHeap)
-    && (ESP.GET_MAX_BLOCK_SIZE() > ASYNCWEBSERVER_MINIMUM_ALLOC);
-}
 
 AsyncWebServer::AsyncWebServer(uint16_t port)
   : AsyncWebServer(IPADDR_ANY, port)
@@ -128,33 +150,38 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, const AsyncWebServ
     if(c == NULL)
       return;
 
-    if (!heap_ok(ASYNCWEBSERVER_MINIMUM_HEAP)) {
+    auto heap_avail = get_heap_available();
+    auto heap_alloc = get_heap_alloc();
+
+    if ((heap_avail < ASYNCWEBSERVER_MINIMUM_HEAP)
+        || (heap_alloc < ASYNCWEBSERVER_MINIMUM_ALLOC)) {
       // Protect ourselves from crashing - just abandon this request.
-      DEBUG_PRINTFP("*** Dropping client %d (%d): %d, %d\n", (intptr_t) c, c->getRemotePort(), _requestQueue.length(), ESP.getFreeHeap());
+      DEBUG_PRINTFP("*** Dropping client %08X (%d): %d, %d/%d\n", (intptr_t) c, c->getRemotePort(), _requestQueue.length(), heap_alloc, heap_avail);
       c->close(true);
       delete c;
       return;
     }
 
     guard();
+    auto queue_length = _requestQueue.length();
 
-    if (((_queueLimits.queueHeapRequired > 0) && !heap_ok(_queueLimits.queueHeapRequired))
-       || ((_queueLimits.nMax > 0) && (_requestQueue.length() >= _queueLimits.nMax))
+    if (((_queueLimits.nMax > 0) && (queue_length >= _queueLimits.nMax))
+        || ((_queueLimits.queueHeapRequired > 0) && (heap_avail < _queueLimits.queueHeapRequired))
     ) {
       // Don't even allocate anything we can avoid.  Tell the client we're in trouble with a static response.
-      DEBUG_PRINTFP("*** Rejecting client %d (%d): %d, %d\n", (intptr_t) c, c->getRemotePort(), _requestQueue.length(), ESP.getFreeHeap());
+      DEBUG_PRINTFP("*** Rejecting client %08X (%d): %d, %d/%d\n", (intptr_t) c, c->getRemotePort(), _requestQueue.length(), heap_alloc, heap_avail);
       c->setNoDelay(true);
       c->onDisconnect([](void*r, AsyncClient* rc){
-        DEBUG_PRINTFP("*** Client %d (%d) disconnected\n", (intptr_t)rc, rc->getRemotePort());
+        DEBUG_PRINTFP("*** Client %08X (%d) disconnected\n", (intptr_t)rc, rc->getRemotePort());
         delete rc;  // There is almost certainly something wrong with this - it's not OK to delete a function object while it's running
       });
       c->onAck([](void *, AsyncClient* rc, size_t s, uint32_t ){  
-        rc->close(true);        
+        if (s) rc->close(true);
       });
       c->onData([](void*, AsyncClient* rc, void*, size_t){
         rc->onData({});
-        minimal_send_503(rc);        
-      });      
+        minimal_send_503(rc);
+      });
       return;
     }
 
@@ -351,7 +378,8 @@ void AsyncWebServer::processQueue(){
   DEBUG_PRINTFP("Queue: %d entries, %d running, %d queued\n", count, active, queued);
 
   do { 
-    auto heap_ok = ESP.getFreeHeap() >= (_queueLimits.requestHeapRequired + _queueLimits.queueHeapRequired);
+    auto heap_ok = get_heap_available() > _queueLimits.requestHeapRequired;
+    auto alloc_ok = get_heap_alloc() > ASYNCWEBSERVER_MINIMUM_ALLOC;
     size_t active_entries = 0;
     AsyncWebServerRequest* next_queued_request = nullptr;
 
@@ -369,7 +397,10 @@ void AsyncWebServer::processQueue(){
 
     if (!next_queued_request) break;  // all done
     if ((_queueLimits.nParallel > 0) && (active_entries >= _queueLimits.nParallel)) break; // lots running
-    if ((active_entries > 0) && (!heap_ok)) break;  // heap not ok    
+    if ((active_entries > 0) && (!heap_ok || !alloc_ok)) {
+      DEBUG_PRINTFP("Can't queue more, heap %d alloc %d\n", heap_ok, alloc_ok);
+      break;
+    }    
     next_queued_request->_handleRequest();
   } while(1); // as long as we have memory and queued requests
 
@@ -385,7 +416,7 @@ void AsyncWebServer::processQueue(){
 
 void AsyncWebServer::_dequeue(AsyncWebServerRequest *request){
   {
-    DEBUG_PRINTFP("Removing %d from queue\n", (intptr_t) request);
+    DEBUG_PRINTFP("Removing %08X from queue\n", (intptr_t) request);
     guard();    
     _requestQueue.remove(request);
   }
