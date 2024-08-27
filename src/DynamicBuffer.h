@@ -24,20 +24,21 @@ class DynamicBuffer {
   DynamicBuffer() : _data(nullptr), _len(0) {};
   explicit DynamicBuffer(size_t len) : _data(len ? reinterpret_cast<char*>(malloc(len)): nullptr), _len(_data ? len : 0) {};
   DynamicBuffer(const char* buf, size_t len) : DynamicBuffer(len) { if (_data) memcpy(_data, buf, len); };
-  explicit DynamicBuffer(const String& s) : DynamicBuffer(s.begin(), s.length()) {};
-  explicit DynamicBuffer(String&&);  // Move string contents in to buffer if possible
-  DynamicBuffer(const SharedBuffer&);
-  DynamicBuffer(SharedBuffer&&);
+
   ~DynamicBuffer() { clear(); };
   
   // Move
   DynamicBuffer(DynamicBuffer&& d) : _data(d._data), _len(d._len) { d._data = nullptr; d._len = 0; };
   DynamicBuffer& operator=(DynamicBuffer&& d) { std::swap(_data, d._data); std::swap(_len, d._len); return *this; };
+  DynamicBuffer(SharedBuffer&&);       // Move data, leaving shared buffer empty
+  explicit DynamicBuffer(String&&);    // Move string contents in to buffer if possible  
 
   // Copy
   DynamicBuffer(const DynamicBuffer& d) : DynamicBuffer(d._data, d._len) {};  // copy
   DynamicBuffer& operator=(const DynamicBuffer& d) { *this = DynamicBuffer(d); return *this; }; // use move to copy
-
+  DynamicBuffer(const SharedBuffer&);   // Copy data
+  explicit DynamicBuffer(const String& s) : DynamicBuffer(s.begin(), s.length()) {};
+  
   // Accessors
   char* data() const { return _data; };
   size_t size() const { return _len; };
