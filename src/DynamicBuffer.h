@@ -166,6 +166,7 @@ class Walkable
   Walkable() : _left(0), _right(0) {};
   explicit Walkable(size_t len) : _buf(len), _left(0), _right(0) {};
   Walkable(const char* buf, size_t len) : _buf(buf, len), _left(0), _right(0) {};
+  Walkable(buffer_type&& buf) : _buf(std::move(buf)), _left(0), _right(0) {};
   explicit Walkable(const String& s) : _buf(s), _left(0), _right(0) {};
   explicit Walkable(String&& s) : _buf(std::move(s)), _left(0), _right(0) {};
 
