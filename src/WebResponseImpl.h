@@ -125,7 +125,7 @@ class AsyncResponseStream: public AsyncAbstractResponse, public Print {
     DynamicBufferListPrint _print;
     size_t _offset;
   public:
-    AsyncResponseStream(const String& contentType, size_t bufferSize);
+    AsyncResponseStream(const String& contentType, size_t bufferSize=TCP_MSS);
     ~AsyncResponseStream();
     bool _sourceValid() const { return (_state < RESPONSE_END); }
     virtual size_t _fillBuffer(uint8_t *buf, size_t maxLen) override;
