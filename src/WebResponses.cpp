@@ -714,32 +714,42 @@ size_t AsyncProgmemResponse::_fillBuffer(uint8_t *data, size_t len){
  * Response Stream (You can print/write/printf to it, up to the contentLen bytes)
  * */
 
-AsyncResponseStream::AsyncResponseStream(const String& contentType, size_t bufferSize){
+AsyncResponseStream::AsyncResponseStream(const String& contentType, size_t bufferSize) : _print(_content, bufferSize), _offset(0) {
   _code = 200;
   _contentLength = 0;
   _contentType = contentType;
-  _content = new cbuf(bufferSize);
 }
 
 AsyncResponseStream::~AsyncResponseStream(){
-  delete _content;
+  ;
 }
 
 size_t AsyncResponseStream::_fillBuffer(uint8_t *buf, size_t maxLen){
-  return _content->read((char*)buf, maxLen);
+  size_t read = 0;
+  while((maxLen > 0) && !_content.empty()) {
+    auto& dbuf = _content.front();
+    auto to_read = std::min(dbuf.size() - _offset, maxLen);
+    memcpy(buf, dbuf.data() + _offset, to_read);
+    buf += to_read;
+    maxLen -= to_read;
+    read += to_read;
+    _offset += to_read;
+    if (_offset == dbuf.size()) {
+      _content.pop_front();
+      _offset = 0;
+    }
+  }
+
+  return read;
 }
 
 size_t AsyncResponseStream::write(const uint8_t *data, size_t len){
   if(_started())
     return 0;
-
-  if(len > _content->room()){
-    size_t needed = len - _content->room();
-    _content->resizeAdd(needed);
-  }
-  size_t written = _content->write((const char*)data, len);
-  _contentLength += written;
-  return written;
+  
+  auto size = _print.write(data, len);
+  _contentLength += size;
+  return size;
 }
 
 size_t AsyncResponseStream::write(uint8_t data){

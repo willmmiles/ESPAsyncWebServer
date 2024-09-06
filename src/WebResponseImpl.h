@@ -119,11 +119,11 @@ class AsyncProgmemResponse: public AsyncAbstractResponse {
     virtual size_t _fillBuffer(uint8_t *buf, size_t maxLen) override;
 };
 
-class cbuf;
-
 class AsyncResponseStream: public AsyncAbstractResponse, public Print {
   private:
-    cbuf *_content;
+    DynamicBufferList _content;
+    DynamicBufferListPrint _print;
+    size_t _offset;
   public:
     AsyncResponseStream(const String& contentType, size_t bufferSize);
     ~AsyncResponseStream();
