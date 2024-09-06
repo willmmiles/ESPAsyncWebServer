@@ -9,7 +9,7 @@
 #include <utility>
 
 #ifdef DYNAMICBUFFER_USE_PSRAM
-#define dynamicbuffer_alloc(x) heap_caps_malloc_prefer(x, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_INTERNAL)
+#define dynamicbuffer_alloc(x) heap_caps_malloc_prefer(x, 2, MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)
 #define dynamicbuffer_free(x) heap_caps_free(x)
 #else
 #define dynamicbuffer_alloc(x) malloc(x)
@@ -244,6 +244,31 @@ class Walkable
     }
     return _buf.size();
   }
+};
+
+// Print adapter for DynamicBuffers
+template<typename buffer_type>
+class BufferPrint : public Print {
+  buffer_type& _buf;
+  size_t offset;
+  public:
+
+  BufferPrint(buffer_type& buf) : _buf(buf), offset(0) {};
+
+  size_t write(const uint8_t *buffer, size_t size) {
+    size = std::min(size, _buf.size() - offset);
+    memcpy(_buf.data(), buffer, size);
+    offset += size;
+    return size;
+  }
+
+  size_t write(uint8_t c) {
+    return this->write(&c, 1);
+  }
+
+  char* data() const { return _buf.data(); }
+  size_t size() const { return offset; }
+  size_t capacity() const { return _buf.size(); }
 };
 
 #undef dynamicbuffer_malloc
