@@ -28,6 +28,8 @@
 #endif
 #include <vector>
 #include "default_init_allocator.h"
+#include "DynamicBuffer.h"
+
 // It is possible to restore these defines, but one can use _min and _max instead. Or std::min, std::max.
 
 class AsyncBasicResponse: public AsyncWebServerResponse {
