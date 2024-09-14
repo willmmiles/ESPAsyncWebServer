@@ -28,6 +28,8 @@
 #endif
 #include <vector>
 #include "default_init_allocator.h"
+#include "DynamicBuffer.h"
+
 // It is possible to restore these defines, but one can use _min and _max instead. Or std::min, std::max.
 
 class AsyncBasicResponse: public AsyncWebServerResponse {
@@ -119,13 +121,13 @@ class AsyncProgmemResponse: public AsyncAbstractResponse {
     virtual size_t _fillBuffer(uint8_t *buf, size_t maxLen) override;
 };
 
-class cbuf;
-
 class AsyncResponseStream: public AsyncAbstractResponse, public Print {
   private:
-    cbuf *_content;
+    DynamicBufferList _content;
+    DynamicBufferListPrint _print;
+    size_t _offset;
   public:
-    AsyncResponseStream(const String& contentType, size_t bufferSize);
+    AsyncResponseStream(const String& contentType, size_t bufferSize=TCP_MSS);
     ~AsyncResponseStream();
     bool _sourceValid() const { return (_state < RESPONSE_END); }
     virtual size_t _fillBuffer(uint8_t *buf, size_t maxLen) override;
