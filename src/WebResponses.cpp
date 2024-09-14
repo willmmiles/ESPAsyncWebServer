@@ -18,6 +18,8 @@
   License along with this library; if not, write to the Free Software
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
+
+#include <string.h>
 #include "ESPAsyncWebServer.h"
 #include "WebResponseImpl.h"
 #include "cbuf.h"
@@ -27,22 +29,6 @@
 #else
 #define DEBUG_PRINTFP(...)
 #endif
-
-#ifdef ESP8266
-#define GET_MAX_BLOCK_SIZE getMaxFreeBlockSize
-#else
-#define GET_MAX_BLOCK_SIZE getMaxAllocHeap
-#endif
-
-// Since ESP8266 does not link memchr by default, here's its implementation.
-void* memchr(void* ptr, int ch, size_t count)
-{
-  unsigned char* p = static_cast<unsigned char*>(ptr);
-  while(count--)
-    if(*p++ == static_cast<unsigned char>(ch))
-      return --p;
-  return nullptr;
-}
 
 
 /*
@@ -297,14 +283,40 @@ void AsyncAbstractResponse::_respond(AsyncWebServerRequest *request){
   _ack(request, 0, 0);
 }
 
-template<typename T>
-static void dealloc_vector(T& vec) {
-  vec = T{};  // move construct an empty vector; space will be freed when scope exits
+
+static size_t _max_heap_alloc() {
+  auto result = 
+#ifdef ESP8266
+    ESP.getMaxFreeBlockSize()
+#else
+    // ESP.getMaxAllocHeap() does not accurately reflect the behavior of malloc()
+    // as it is missing the 'MALLOC_CAP_DEFAULT' flag.
+    heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT)
+#endif
+    - 128;  // fudge factor
+  
+  return result;
+}
+
+static DynamicBuffer _safe_allocate_buffer(size_t outLen) {   
+  // Espressif lwip configuration always copies in to the TCP stack, so 
+  // we have to have enough room to allocate the copy buffer.  It's too bad we
+  // can't re-use our assembly buffer, but it is what it is.
+  auto rv = DynamicBuffer(outLen);
+  if (outLen > TCP_MSS) {
+    // Validate that there's enough space to allocate the copy buffer
+    if (!rv || (_max_heap_alloc() < outLen)) {
+        // Try allocating a single packet's worth instead
+        rv.clear();
+        rv.resize(TCP_MSS);
+    }
+  }
+  return rv;
 }
 
 size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
   (void)time;
-  DEBUG_PRINTFP("(%d) ack %d\n", (intptr_t) this, len);
+  DEBUG_PRINTFP("(%08x) ack %d\n", (intptr_t) this, len);
 
   if(!_sourceValid()){
     _state = RESPONSE_FAILED;
@@ -313,11 +325,17 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
   }
   _ackedLength += len;
 
-  size_t space = request->client()->space();  // TCP window space available; NOT a guarantee we can actually send this much  
-  size_t headLen = _head.length();
+  size_t space = request->client()->space();  // TCP window space available; NOT a guarantee we can actually send this much    
   bool needs_send = false;
+  if ((space == 0) && ((_state == RESPONSE_HEADERS) || (_state == RESPONSE_CONTENT))) {
+    // Cannot accept more data now, wait for next event    
+    DEBUG_PRINTFP("(%08x)NS\n", (intptr_t)this);
+    return 0;
+  }
 
   if(_state == RESPONSE_HEADERS){
+    // FUTURE: we could replace _head with _packet
+    size_t headLen = _head.length();
     auto headWritten = request->client()->add(_head.c_str(), std::min(space, headLen));
     _writtenLength += headWritten;
     if (headWritten < headLen) {
@@ -336,16 +354,19 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
       // Complete the cached data
       auto written = request->client()->add((const char*) _packet.data(), std::min(space, (size_t) _packet.size()));
       _writtenLength += written;
-      _packet.erase(_packet.begin(), _packet.begin() + written);
+      _packet.advance(written);
       space -= written;
       if (_packet.size()) {
         //  Couldn't queue the full cache
-        request->client()->send();
+        DEBUG_PRINTFP("(%08x)PBW %d,%d\n", (intptr_t)this, written, _packet.size());
+        if (written) request->client()->send();
         return written;
       }
+      _packet = {};
       needs_send = true;
     }
-
+    assert(_packet.capacity() == 0);  // no buffer is allocated
+    
     size_t outLen, readLen;
     if(_chunked){
       if(space <= 8){
@@ -357,33 +378,19 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     } else {
       outLen = std::min(space, _contentLength - _sentLength);
     }
-#ifdef ESP8266
+
     // Limit outlen based on available memory
     // We require two packet buffers - one allocated here, and one belonging to the TCP stack
-    {      
-      auto old_space = _packet.capacity();
-      auto max_block_size = ESP.getMaxFreeBlockSize() - 128;
-      if ((old_space < outLen) || (outLen > max_block_size)) {
-        DEBUG_PRINTFP("(%d) Space adjustment, have %d, want %d, avail %d\n", (intptr_t)this, old_space, outLen, max_block_size);
-        do { 
-          dealloc_vector(_packet);
-          outLen = std::min(outLen, max_block_size);
-          _packet.resize(outLen);
-          max_block_size = ESP.getMaxFreeBlockSize() - 128;
-          DEBUG_PRINTFP("(%d) Checking %d vs %d\n", (intptr_t)this, outLen, max_block_size);
-        } while (max_block_size < outLen);
-      } else {
-        _packet.resize(outLen);
-      }
-    }
-#else
-  _packet.resize(outLen);
-#endif
+    _packet = _safe_allocate_buffer(outLen);
     
-    if(_chunked){      
+    if(_chunked){
+      if (_packet.size() < 8) {
+        _packet.clear();
+        goto content_abort;
+      }      
       // HTTP 1.1 allows leading zeros in chunk length. Or spaces may be added.
       // See RFC2616 sections 2, 3.6.1.
-      readLen = _fillBufferAndProcessTemplates(_packet.data() + 6, outLen - 8);
+      readLen = _fillBufferAndProcessTemplates((uint8_t*) (_packet.data() + 6), _packet.size() - 8);
       if(readLen == RESPONSE_TRY_AGAIN){
           _packet.clear();
           goto content_abort;
@@ -395,9 +402,8 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
       outLen += readLen;
       _packet[outLen++] = '\r';
       _packet[outLen++] = '\n';
-      
     } else {
-      readLen = _fillBufferAndProcessTemplates(_packet.data(), _packet.size());
+      readLen = _fillBufferAndProcessTemplates((uint8_t*)_packet.data(), _packet.size());
       if(readLen == RESPONSE_TRY_AGAIN){
           _packet.clear();
           goto content_abort;
@@ -409,17 +415,17 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     if(_packet.size()){      
         auto acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size());
         _writtenLength += acceptedLen;
-        _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
+        _packet.advance(acceptedLen);
         if (acceptedLen < outLen) {
-          // Save the unsent block in cache
-          DEBUG_PRINTFP("(%d) Incomplete write, %d/%d\nHeap: %d/%d\nSpace:%d\n", (intptr_t) this, acceptedLen, outLen, ESP.GET_MAX_BLOCK_SIZE(), ESP.getFreeHeap(), request->client()->space());
-          // Try again, with less
-          acceptedLen = request->client()->write((const char*)_packet.data(), _packet.size()/2);
+          DEBUG_PRINTFP("(%08x)IW%d/%d\nH:%d/%d\nS:%d\n", (intptr_t) this, acceptedLen, outLen, _max_heap_alloc(), ESP.getFreeHeap(), request->client()->space());
+          // Try again, with less.
+          acceptedLen = request->client()->write((const char*)_packet.data(), std::min(outLen/2, (size_t)TCP_MSS));
           _writtenLength += acceptedLen;
-          _packet.erase(_packet.begin(), _packet.begin() + acceptedLen);
+          _packet.advance(acceptedLen);
         }
-        DEBUG_PRINTFP("(%d) Accepted: %d\n", (intptr_t) this, acceptedLen);
-        if (_packet.size() == 0) dealloc_vector(_packet);
+        // Data we couldn't send is held in _packet
+        DEBUG_PRINTFP("(%08x)AL%d %d\n", (intptr_t) this, acceptedLen, _packet.size());
+        if (_packet.size() == 0) _packet = {};  // release buffer
     }
 
     if( (_chunked && readLen == 0)  // Chunked mode, no more data
@@ -452,7 +458,7 @@ size_t AsyncAbstractResponse::_readDataFromCacheOrContent(uint8_t* data, const s
     const size_t readFromCache = std::min(len, _cache.size());
     if(readFromCache) {
       memcpy(data, _cache.data(), readFromCache);
-      _cache.erase(_cache.begin(), _cache.begin() + readFromCache);
+      _cache.advance(readFromCache);
     }
     // If we need to read more...
     if (len > readFromCache) {
@@ -465,6 +471,16 @@ size_t AsyncAbstractResponse::_readDataFromCacheOrContent(uint8_t* data, const s
       if (readFromCache == 0) return readFromContent;
     } 
     return readFromCache;
+}
+
+static void push_front(Walkable<DynamicBuffer>& buf, const uint8_t* data, const uint8_t* end) {
+  auto size = end - data;
+  auto old_size = buf.size();
+  auto new_buf = Walkable<DynamicBuffer> { old_size + size };
+  // TODO: error checks
+  memcpy(new_buf.data(), data, size);
+  memcpy(new_buf.data() + size, buf.data(), old_size);
+  buf = std::move(new_buf);
 }
 
 size_t AsyncAbstractResponse::_fillBufferAndProcessTemplates(uint8_t* data, size_t len)
@@ -506,13 +522,13 @@ size_t AsyncAbstractResponse::_fillBufferAndProcessTemplates(uint8_t* data, size
           *pTemplateEnd = 0;
           paramName = String(reinterpret_cast<char*>(buf));
           // Copy remaining read-ahead data into cache
-          _cache.insert(_cache.begin(), pTemplateEnd + 1, buf + (&data[len - 1] - pTemplateStart) + readFromCacheOrContent);
+          push_front(_cache, pTemplateEnd + 1, buf + (&data[len - 1] - pTemplateStart) + readFromCacheOrContent);
           pTemplateEnd = &data[len - 1];
         }
         else // closing placeholder not found in file data, store found percent symbol as is and advance to the next position
         {
           // but first, store read file data in cache
-          _cache.insert(_cache.begin(), buf + (&data[len - 1] - pTemplateStart), buf + (&data[len - 1] - pTemplateStart) + readFromCacheOrContent);
+          push_front(_cache, buf + (&data[len - 1] - pTemplateStart), buf + (&data[len - 1] - pTemplateStart) + readFromCacheOrContent);
           ++pTemplateStart;
         }
       }
@@ -534,7 +550,7 @@ size_t AsyncAbstractResponse::_fillBufferAndProcessTemplates(uint8_t* data, size
       // make room for param value
       // 1. move extra data to cache if parameter value is longer than placeholder AND if there is no room to store
       if((pTemplateEnd + 1 < pTemplateStart + numBytesCopied) && (originalLen - (pTemplateStart + numBytesCopied - pTemplateEnd - 1) < len)) {
-        _cache.insert(_cache.begin(), &data[originalLen - (pTemplateStart + numBytesCopied - pTemplateEnd - 1)], &data[len]);
+        push_front(_cache, &data[originalLen - (pTemplateStart + numBytesCopied - pTemplateEnd - 1)], &data[len]);
         //2. parameter value is longer than placeholder text, push the data after placeholder which not saved into cache further to the end
         memmove(pTemplateStart + numBytesCopied, pTemplateEnd + 1, &data[originalLen] - pTemplateStart - numBytesCopied);
         len = originalLen; // fix issue with truncated data, not sure if it has any side effects
@@ -546,7 +562,7 @@ size_t AsyncAbstractResponse::_fillBufferAndProcessTemplates(uint8_t* data, size
       memcpy(pTemplateStart, pvstr, numBytesCopied);
       // If result is longer than buffer, copy the remainder into cache (this could happen only if placeholder text itself did not fit entirely in buffer)
       if(numBytesCopied < pvlen) {
-        _cache.insert(_cache.begin(), pvstr + numBytesCopied, pvstr + pvlen);
+        push_front(_cache, (uint8_t*) pvstr + numBytesCopied,  (uint8_t*) pvstr + pvlen);
       } else if(pTemplateStart + numBytesCopied < pTemplateEnd + 1) { // result is copied fully; if result is shorter than placeholder text...
         // there is some free room, fill it from cache
         const size_t roomFreed = pTemplateEnd + 1 - pTemplateStart - numBytesCopied;
