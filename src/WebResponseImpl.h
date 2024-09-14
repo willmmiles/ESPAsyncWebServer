@@ -23,11 +23,11 @@
 
 #ifdef Arduino_h
 // arduino is not compatible with std::vector
+// It is possible to restore these defines, but one can use _min and _max instead. Or std::min, std::max.
 #undef min
 #undef max
 #endif
 #include "DynamicBuffer.h"
-// It is possible to restore these defines, but one can use _min and _max instead. Or std::min, std::max.
 
 class AsyncBasicResponse: public AsyncWebServerResponse {
   private:
@@ -42,10 +42,6 @@ class AsyncBasicResponse: public AsyncWebServerResponse {
 class AsyncAbstractResponse: public AsyncWebServerResponse {
   private:
     String _head;
-    // Data is inserted into cache at begin(). 
-    // This is inefficient with vector, but if we use some other container, 
-    // we won't be able to access it as contiguous array of bytes when reading from it,
-    // so by gaining performance in one place, we'll lose it in another.
     Walkable<DynamicBuffer> _packet, _cache;
     size_t _readDataFromCacheOrContent(uint8_t* data, const size_t len);
     size_t _fillBufferAndProcessTemplates(uint8_t* buf, size_t maxLen);
@@ -118,13 +114,13 @@ class AsyncProgmemResponse: public AsyncAbstractResponse {
     virtual size_t _fillBuffer(uint8_t *buf, size_t maxLen) override;
 };
 
-class cbuf;
-
 class AsyncResponseStream: public AsyncAbstractResponse, public Print {
   private:
-    cbuf *_content;
+    DynamicBufferList _content;
+    DynamicBufferListPrint _print;
+    size_t _offset;
   public:
-    AsyncResponseStream(const String& contentType, size_t bufferSize);
+    AsyncResponseStream(const String& contentType, size_t bufferSize=TCP_MSS);
     ~AsyncResponseStream();
     bool _sourceValid() const { return (_state < RESPONSE_END); }
     virtual size_t _fillBuffer(uint8_t *buf, size_t maxLen) override;
