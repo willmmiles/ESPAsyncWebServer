@@ -23,7 +23,7 @@ class DynamicBuffer {
 
   DynamicBuffer() : _data(nullptr), _len(0) {};
   explicit DynamicBuffer(size_t len) : _data(len ? reinterpret_cast<char*>(malloc(len)): nullptr), _len(_data ? len : 0) {};
-  DynamicBuffer(const char* buf, size_t len) : DynamicBuffer(len) { if (_data) memcpy(_data, buf, len); };
+  DynamicBuffer(const void* buf, size_t len) : DynamicBuffer(len) { if (_data) memcpy(_data, buf, len); };
 
   ~DynamicBuffer() { clear(); };
   
