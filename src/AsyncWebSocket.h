@@ -211,7 +211,7 @@ class AsyncWebSocketClient {
 
     //control frames
     void close(uint16_t code=0, const char * message=NULL);
-    void ping(uint8_t *data=NULL, size_t len=0);
+    void ping(const uint8_t *data=NULL, size_t len=0);
 
     //set auto-ping period in seconds. disabled if zero (default)
     void keepAlivePeriod(uint16_t seconds){

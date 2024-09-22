@@ -129,7 +129,7 @@ class AsyncWebSocketControl {
     bool _mask;
     bool _finished;
   public:
-    AsyncWebSocketControl(uint8_t opcode, uint8_t *data=NULL, size_t len=0, bool mask=false)
+    AsyncWebSocketControl(uint8_t opcode, const uint8_t *data=NULL, size_t len=0, bool mask=false)
       :_opcode(opcode)
       ,_len(len)
       ,_mask(len && mask)
@@ -143,7 +143,7 @@ class AsyncWebSocketControl {
         _data = (uint8_t*)malloc(_len);
         if(_data == NULL)
           _len = 0;
-        else memcpy(_data, data, len);
+        else memcpy_P(_data, data, len);
       } else _data = NULL;
     }
     virtual ~AsyncWebSocketControl(){
@@ -375,8 +375,8 @@ AsyncWebSocketMultiMessage* AsyncWebSocketMultiMessage::clone() const {
 /*
  * Async WebSocket Client
  */
- const char * AWSC_PING_PAYLOAD = "awscPING";
- const size_t AWSC_PING_PAYLOAD_LEN = 8;
+ const char AWSC_PING_PAYLOAD[] PROGMEM = "awscPING";
+ constexpr size_t AWSC_PING_PAYLOAD_LEN = sizeof(AWSC_PING_PAYLOAD);
 
 AsyncWebSocketClient::AsyncWebSocketClient(AsyncWebServerRequest *request, AsyncWebSocket *server)
   : _controlQueue(LinkedList<AsyncWebSocketControl *>([](AsyncWebSocketControl *c){ delete  c; }))
@@ -434,7 +434,7 @@ void AsyncWebSocketClient::_onPoll(){
   if(_client->canSend() && (!_controlQueue.isEmpty() || !_messageQueue.isEmpty())){
     _runQueue();
   } else if(_keepAlivePeriod > 0 && _controlQueue.isEmpty() && _messageQueue.isEmpty() && (millis() - _lastMessageTime) >= _keepAlivePeriod){
-    ping((uint8_t *)AWSC_PING_PAYLOAD, AWSC_PING_PAYLOAD_LEN);
+    ping(AWSC_PING_PAYLOAD, AWSC_PING_PAYLOAD_LEN);
   }
 }
 
@@ -510,7 +510,7 @@ void AsyncWebSocketClient::close(uint16_t code, const char * message){
   _queueControl(new AsyncWebSocketControl(WS_DISCONNECT));
 }
 
-void AsyncWebSocketClient::ping(uint8_t *data, size_t len){
+void AsyncWebSocketClient::ping(const uint8_t *data, size_t len){
   if(_status == WS_CONNECTED)
     _queueControl(new AsyncWebSocketControl(WS_PING, data, len));
 }
