@@ -129,7 +129,7 @@ class AsyncWebSocketControl {
     bool _mask;
     bool _finished;
   public:
-    AsyncWebSocketControl(uint8_t opcode, const uint8_t *data=NULL, size_t len=0, bool mask=false)
+    AsyncWebSocketControl(uint8_t opcode, const void *data=NULL, size_t len=0, bool mask=false)
       :_opcode(opcode)
       ,_len(len)
       ,_mask(len && mask)
@@ -510,7 +510,7 @@ void AsyncWebSocketClient::close(uint16_t code, const char * message){
   _queueControl(new AsyncWebSocketControl(WS_DISCONNECT));
 }
 
-void AsyncWebSocketClient::ping(const uint8_t *data, size_t len){
+void AsyncWebSocketClient::ping(const void *data, size_t len){
   if(_status == WS_CONNECTED)
     _queueControl(new AsyncWebSocketControl(WS_PING, data, len));
 }
