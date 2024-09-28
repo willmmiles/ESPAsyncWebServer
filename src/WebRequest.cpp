@@ -93,7 +93,7 @@ AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer* server, AsyncClient
   , _itemIsFile(false)
   , _tempObject(NULL)
 {
-  DEBUG_PRINTFP("(%d) WR created", (intptr_t)this);
+  DEBUG_PRINTFP("(%x) WR created", (intptr_t)this);
   _client->onError([](void *r, AsyncClient* c, int8_t error){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onError(error); }, this);
   _client->onAck([](void *r, AsyncClient* c, size_t len, uint32_t time){ (void)c; AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onAck(len, time); }, this);
   _client->onDisconnect([](void *r, AsyncClient* c){ AsyncWebServerRequest *req = (AsyncWebServerRequest*)r; req->_onDisconnect(); delete c; }, this);
@@ -103,7 +103,7 @@ AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer* server, AsyncClient
 }
 
 AsyncWebServerRequest::~AsyncWebServerRequest(){
-  DEBUG_PRINTFP("(%d) WR destructing", (intptr_t)this);
+  DEBUG_PRINTFP("(%x) WR destructing", (intptr_t)this);
 
   _headers.free();
 
@@ -126,7 +126,7 @@ AsyncWebServerRequest::~AsyncWebServerRequest(){
 
   _server->_dequeue(this);
   
-  DEBUG_PRINTFP("(%d) WR destructed", (intptr_t)this);
+  DEBUG_PRINTFP("(%x) WR destructed", (intptr_t)this);
 }
 
 void AsyncWebServerRequest::_onData(void *buf, size_t len){
@@ -614,7 +614,7 @@ void AsyncWebServerRequest::_parseLine(){
 
 void AsyncWebServerRequest::_requestReady() {
     //check if authenticated before calling handleRequest and request auth instead
-    DEBUG_PRINTFP("(%d) WR handler ready %s", (intptr_t) this, url().c_str());
+    DEBUG_PRINTFP("(%x) WR handler ready %s", (intptr_t) this, url().c_str());
     if(_handler) {
       _parseState = PARSE_REQ_QUEUED;
       _server->processQueue();
@@ -628,7 +628,7 @@ void AsyncWebServerRequest::_requestReady() {
 void AsyncWebServerRequest::_handleRequest() {
   // Shouldn't be possible to land here without a handler
   assert(_handler);
-  DEBUG_PRINTFP("(%d) WR handler running", (intptr_t) this);
+  DEBUG_PRINTFP("(%x) WR handler running", (intptr_t) this);
   _parseState = PARSE_REQ_END;
   _handler->handleRequest(this);
 };
@@ -755,7 +755,7 @@ void AsyncWebServerRequest::addInterestingHeader(const String& name){
 }
 
 void AsyncWebServerRequest::send(AsyncWebServerResponse *response){
-  DEBUG_PRINTFP("(%d) WR added response %d",(intptr_t)this, (intptr_t)response);
+  DEBUG_PRINTFP("(%x) WR added response %x",(intptr_t)this, (intptr_t)response);
   _response = response;
   if(_response == NULL){
     _client->close(true);
@@ -1057,7 +1057,7 @@ bool AsyncWebServerRequest::isExpectedRequestedConnType(RequestedConnectionType 
 
 void AsyncWebServerRequest::deferResponse() {
   // Ask the server to put us on the back of the queue
-  DEBUG_PRINTFP("(%d) WR defer", (intptr_t) this);
+  DEBUG_PRINTFP("(%x) WR defer", (intptr_t) this);
   _parseState = PARSE_REQ_DEFERRED;
   // Queue processing loop will handle it from here
 }
