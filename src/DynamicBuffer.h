@@ -8,14 +8,6 @@
 #include <list>
 #include <utility>
 
-#ifdef DYNAMICBUFFER_USE_PSRAM
-#define dynamicbuffer_alloc(x) heap_caps_malloc_prefer(x, 2, MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)
-#define dynamicbuffer_free(x) heap_caps_free(x)
-#else
-#define dynamicbuffer_alloc(x) malloc(x)
-#define dynamicbuffer_free(x) free(x)
-#endif
-
 // Forward declaration
 class SharedBuffer;
 
@@ -27,10 +19,10 @@ class DynamicBuffer {
 
   public:
 
-  void clear() { if (_data) free(_data); _data = nullptr; _len = 0; }
+  void clear();
 
   DynamicBuffer() : _data(nullptr), _len(0) {};
-  explicit DynamicBuffer(size_t len) : _data(len ? reinterpret_cast<char*>(malloc(len)): nullptr), _len(_data ? len : 0) {};
+  explicit DynamicBuffer(size_t len);
   DynamicBuffer(const char* buf, size_t len) : DynamicBuffer(len) { if (_data) memcpy(_data, buf, len); };
 
   ~DynamicBuffer() { clear(); };
@@ -271,5 +263,5 @@ class BufferPrint : public Print {
   size_t capacity() const { return _buf.size(); }
 };
 
-#undef dynamicbuffer_malloc
+#undef dynamicbuffer_alloc
 #undef dynamicbuffer_free
