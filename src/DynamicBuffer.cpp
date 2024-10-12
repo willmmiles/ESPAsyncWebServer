@@ -9,7 +9,7 @@
 #define dynamicbuffer_free(x) heap_caps_free(x)
 #else
 #define dynamicbuffer_alloc(x) malloc(x)
-#define dynamicbuffer_alloc(ptr, x) realloc(ptr, x)
+#define dynamicbuffer_realloc(ptr, x) realloc(ptr, x)
 #define dynamicbuffer_free(x) free(x)
 #endif
 
