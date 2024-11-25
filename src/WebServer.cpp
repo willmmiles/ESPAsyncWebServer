@@ -438,10 +438,21 @@ static char* append_vprintf_P(char* buf, char* end, const char* /*PROGMEM*/ fmt,
 }
 
 void AsyncWebServer::printStatus(Print& dest){
+#ifdef ESP8266
   char buf[1024];
+  char* buf_p = &buf[0];
+  char* end = buf_p + sizeof(buf);
+#else
+  DynamicBuffer dbuf(2048);
+  if (dbuf.size() == 0) {
+    dest.println(F("Web server status: print buffer failure"));
+    return;
+  };
+  char* buf = dbuf.data();
   char* buf_p = buf;
-  char* end = &buf[sizeof(buf)];
-  buf[0] = 0;
+  char* end = buf_p + dbuf.size();  
+#endif  
+  buf_p[0] = 0;
   {
     guard();  
     for(const auto& entry: _requestQueue) {
@@ -452,7 +463,7 @@ void AsyncWebServer::printStatus(Print& dest){
       }
     }
   }
-  buf[sizeof(buf)-1] = 0; // just in case
+  *(end-1) = 0; // just in case
   dest.print(F("Web server status:"));
   if (buf[0]) {
     dest.println(buf);
