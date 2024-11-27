@@ -19,10 +19,10 @@ class DynamicBuffer {
 
   public:
 
-  void clear() { if (_data) free(_data); _data = nullptr; _len = 0; }
+  void clear();
 
   DynamicBuffer() : _data(nullptr), _len(0) {};
-  explicit DynamicBuffer(size_t len) : _data(len ? reinterpret_cast<char*>(malloc(len)): nullptr), _len(_data ? len : 0) {};
+  explicit DynamicBuffer(size_t len);
   DynamicBuffer(const void* buf, size_t len) : DynamicBuffer(len) { if (_data) memcpy(_data, buf, len); };
 
   ~DynamicBuffer() { clear(); };
@@ -237,3 +237,31 @@ class Walkable
     return _buf.size();
   }
 };
+
+// Print adapter for DynamicBuffers
+template<typename buffer_type>
+class BufferPrint : public Print {
+  buffer_type& _buf;
+  size_t offset;
+  public:
+
+  BufferPrint(buffer_type& buf) : _buf(buf), offset(0) {};
+
+  size_t write(const uint8_t *buffer, size_t size) {
+    size = std::min(size, _buf.size() - offset);
+    memcpy(_buf.data(), buffer, size);
+    offset += size;
+    return size;
+  }
+
+  size_t write(uint8_t c) {
+    return this->write(&c, 1);
+  }
+
+  char* data() const { return _buf.data(); }
+  size_t size() const { return offset; }
+  size_t capacity() const { return _buf.size(); }
+};
+
+#undef dynamicbuffer_alloc
+#undef dynamicbuffer_free

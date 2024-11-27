@@ -1,6 +1,19 @@
 #include "DynamicBuffer.h"
 #include <numeric>
 
+//#define DYNAMICBUFFER_USE_PSRAM
+
+#ifdef DYNAMICBUFFER_USE_PSRAM
+#define dynamicbuffer_alloc(x) heap_caps_malloc_prefer(x, 2, MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)
+#define dynamicbuffer_realloc(ptr, x) heap_caps_realloc_prefer(ptr, x, 2, MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)
+#define dynamicbuffer_free(x) heap_caps_free(x)
+#else
+#define dynamicbuffer_alloc(x) malloc(x)
+#define dynamicbuffer_realloc(ptr, x) realloc(ptr, x)
+#define dynamicbuffer_free(x) free(x)
+#endif
+
+
 // Helper class - lets us move the buffer out of a String
 namespace {
   class DynamicBufferString : public String {
@@ -29,6 +42,8 @@ namespace {
   };
 }
 
+DynamicBuffer::DynamicBuffer(size_t len): _data(len ? reinterpret_cast<char*>(dynamicbuffer_alloc(len)): nullptr), _len(_data ? len : 0) {};
+
 DynamicBuffer::DynamicBuffer(String&& s) : _data(nullptr), _len(s.length()) {
   auto rb = DynamicBufferString(std::move(s));
   _data = rb.release();
@@ -43,9 +58,14 @@ DynamicBuffer::DynamicBuffer(SharedBuffer&& b) : _data(nullptr), _len(0) {
   if (b) *this = std::move(*b._buf);
 }
 
+void DynamicBuffer::clear() {
+    if (_data) dynamicbuffer_free(_data);
+    _data = nullptr; _len = 0;
+}
+
 size_t DynamicBuffer::resize(size_t s) {
   if (_len != s) {
-    auto next = realloc(_data, s);
+    auto next = dynamicbuffer_realloc(_data, s);
     if (next) {
       _data = reinterpret_cast<char*>(next);
       _len = s;
