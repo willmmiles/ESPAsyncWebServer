@@ -28,23 +28,16 @@
 #endif
 
 #ifdef ASYNCWEBSERVER_NEEDS_MUTEX
-#ifdef DEBUG_GUARDS
 struct guard_type {
-  std::unique_lock<std::mutex> _lock;
-  size_t _line;
-  guard_type(std::mutex& m, size_t line) : _line(line) {
-    DEBUG_PRINTFP("acquire: %d\n", _line);
-    _lock = decltype(_lock) { m };  // defer construction
+  SemaphoreHandle_t _mtx;
+  guard_type(SemaphoreHandle_t m) : _mtx(m) {
+    xSemaphoreTake(_mtx, portMAX_DELAY);  // todo: error check
   }
   ~guard_type() {    
-    _lock.unlock();
-    DEBUG_PRINTFP("release: %d\n", _line);
+    xSemaphoreGive(_mtx);
   }
 };
-#define guard() const guard_type guard(_mutex, __LINE__)
-#else
-#define guard() const std::lock_guard<std::mutex> guard(_mutex)
-#endif
+#define guard() const guard_type guard(_mutex)
 #else
 #define guard()
 #endif
@@ -140,6 +133,9 @@ AsyncWebServer::AsyncWebServer(IPAddress addr, uint16_t port, const AsyncWebServ
   , _server(addr, port)
   , _rewrites([](AsyncWebRewrite* r){ delete r; })
   , _handlers([](AsyncWebHandler* h){ delete h; })
+#ifdef ASYNCWEBSERVER_NEEDS_MUTEX
+  , _mutex(xSemaphoreCreateMutex())
+#endif
   , _requestQueue(LinkedList<AsyncWebServerRequest*>::OnRemove {})
   , _queueActive(false)
 {

@@ -29,7 +29,6 @@
 #include "StringArray.h"
 
 #ifdef ESP32
-#include <mutex>
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #define ASYNCWEBSERVER_NEEDS_MUTEX
@@ -424,7 +423,7 @@ class AsyncWebServer {
     LinkedList<AsyncWebHandler*> _handlers;    
     AsyncCallbackWebHandler* _catchAllHandler;
 #ifdef ASYNCWEBSERVER_NEEDS_MUTEX    
-    std::mutex _mutex;
+    SemaphoreHandle_t  _mutex;
 #endif
     LinkedList<AsyncWebServerRequest*> _requestQueue;
     bool _queueActive;
