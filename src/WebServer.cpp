@@ -424,46 +424,36 @@ void AsyncWebServer::setQueueLimits(const AsyncWebServerQueueLimits& limits) {
   _queueLimits = limits;
 }
 
-static char* append_vprintf_P(char* buf, char* end, const char* /*PROGMEM*/ fmt, ...){
-  va_list argp;
-  va_start(argp, fmt);
-  const auto max = end-buf;
-  const auto needed = vsnprintf_P(buf, max, fmt, argp);
-  va_end(argp);
-  return (needed >= max) ? end-1 : buf + needed;
-}
-
 void AsyncWebServer::printStatus(Print& dest){
-#ifdef ESP8266
-  char buf[1024];
-  char* buf_p = &buf[0];
-  char* end = buf_p + sizeof(buf);
-#else
+  dest.print(F("Web server status: "));
+#ifdef ASYNCWEBSERVER_NEEDS_MUTEX
+  // Print to a local buffer while we hold the lock
   DynamicBuffer dbuf(2048);
   if (dbuf.size() == 0) {
-    dest.println(F("Web server status: print buffer failure"));
+    dest.println(F("print buffer failure"));
     return;
   };
-  char* buf = dbuf.data();
-  char* buf_p = buf;
-  char* end = buf_p + dbuf.size();  
+  BufferPrint<DynamicBuffer> print_dest(dbuf);
+#else
+  auto& print_dest = dest;
 #endif  
-  buf_p[0] = 0;
   {
-    guard();  
-    for(const auto& entry: _requestQueue) {
-      buf_p = append_vprintf_P(buf_p, end, PSTR("\n- Request %X [%X], state %d"), (intptr_t) entry, (intptr_t) entry->_client, entry->_parseState);
-      if (entry->_response) {
-        auto r = entry->_response;
-        buf_p = append_vprintf_P(buf_p, end, PSTR(" -- Response %X, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
+    guard();
+    if (_requestQueue.isEmpty()) {
+      print_dest.println(F(" Idle"));
+    } else {
+      for(const auto& entry: _requestQueue) {
+        print_dest.printf_P(PSTR("\n- Request %X [%X], state %d"), (intptr_t) entry, (intptr_t) entry->_client, entry->_parseState);
+        if (entry->_response) {
+          auto r = entry->_response;
+          print_dest.printf_P(PSTR(" -- Response %X, state %d, [%d %d - %d %d %d]"), (intptr_t) r, r->_state, r->_headLength, r->_contentLength, r->_sentLength, r->_ackedLength, r->_writtenLength);
+        }
       }
+      print_dest.println();
     }
   }
-  *(end-1) = 0; // just in case
-  dest.print(F("Web server status:"));
-  if (buf[0]) {
-    dest.println(buf);
-  } else {
-    dest.println(F(" Idle"));
-  }
+  #ifdef ASYNCWEBSERVER_NEEDS_MUTEX
+  print_dest.write('\0'); // null terminate
+  dest.print(print_dest.data());
+  #endif
 }
