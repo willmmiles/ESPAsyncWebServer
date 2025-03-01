@@ -440,7 +440,7 @@ void AsyncWebServer::printStatus(Print& dest){
   {
     guard();
     if (_requestQueue.isEmpty()) {
-      print_dest.println(F(" Idle"));
+      print_dest.print(F(" Idle\n"));
     } else {
       for(const auto& entry: _requestQueue) {
         print_dest.printf_P(PSTR("\n- Request %X [%X], state %d"), (intptr_t) entry, (intptr_t) entry->_client, entry->_parseState);
