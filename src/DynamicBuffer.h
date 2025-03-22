@@ -249,7 +249,7 @@ class BufferPrint : public Print {
 
   size_t write(const uint8_t *buffer, size_t size) {
     size = std::min(size, _buf.size() - offset);
-    memcpy(_buf.data(), buffer, size);
+    memcpy(_buf.data() + offset, buffer, size);
     offset += size;
     return size;
   }
