@@ -80,6 +80,12 @@ class LinkedList {
     LinkedList(OnRemove onRemove) : _root(nullptr), _last(nullptr), _onRemove(onRemove) {}
     ~LinkedList() { free(); }
 
+    LinkedList(const LinkedList<T, Item>&) = delete;
+    LinkedList(LinkedList<T, Item>&&) = delete;
+    LinkedList& operator=(const LinkedList<T, Item>&) = delete;
+    LinkedList& operator=(LinkedList<T, Item>&&) = delete;
+
+
     void add(T t){
       auto it = new ItemType(std::move(t));
       if(!_root){

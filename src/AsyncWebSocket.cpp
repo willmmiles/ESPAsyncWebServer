@@ -369,8 +369,8 @@ AsyncWebSocketMultiMessage* AsyncWebSocketMultiMessage::clone() const {
  constexpr size_t AWSC_PING_PAYLOAD_LEN = sizeof(AWSC_PING_PAYLOAD);
 
 AsyncWebSocketClient::AsyncWebSocketClient(AsyncWebServerRequest *request, AsyncWebSocket *server)
-  : _controlQueue(LinkedList<AsyncWebSocketControl *>([](AsyncWebSocketControl *c){ delete  c; }))
-  , _messageQueue(LinkedList<AsyncWebSocketMessage *>([](AsyncWebSocketMessage *m){ delete  m; }))
+  : _controlQueue([](AsyncWebSocketControl *c){ delete  c; })
+  , _messageQueue([](AsyncWebSocketMessage *m){ delete  m; })
   , _tempObject(NULL)
 {
   _client = request->client();
@@ -844,7 +844,7 @@ uint16_t AsyncWebSocketClient::remotePort() {
 
 AsyncWebSocket::AsyncWebSocket(const String& url)
   :_url(url)
-  ,_clients(LinkedList<AsyncWebSocketClient *>([](AsyncWebSocketClient *c){ delete c; }))
+  ,_clients([](AsyncWebSocketClient *c){ delete c; })
   ,_cNextId(1)
   ,_enabled(true)
 {
@@ -1203,7 +1203,7 @@ AsyncWebSocketMessageBuffer* AsyncWebSocket::makeBuffer(const uint8_t * data, si
   return new AsyncWebSocketMessageBuffer(std::move(buffer));
 }
 
-AsyncWebSocket::AsyncWebSocketClientLinkedList AsyncWebSocket::getClients() const {
+const AsyncWebSocket::AsyncWebSocketClientLinkedList& AsyncWebSocket::getClients() const {
   return _clients;
 }
 

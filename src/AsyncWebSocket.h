@@ -355,7 +355,7 @@ class AsyncWebSocket: public AsyncWebHandler {
     AsyncWebSocketMessageBuffer* makeBuffer(const uint8_t * data, size_t size)  __attribute__((deprecated));
     void _cleanBuffers() {};
 
-    AsyncWebSocketClientLinkedList getClients() const;
+    const AsyncWebSocketClientLinkedList& getClients() const;
 };
 
 //WebServer response to authenticate the socket and detach the tcp client from the web server request
