@@ -220,6 +220,7 @@ class AsyncWebServerRequest {
   friend class AsyncCallbackWebHandler;
   friend class AsyncFileResponse;
   friend class AsyncStaticWebHandler;
+  friend class AsyncURIMatcher;
 
 private:
   AsyncClient *_client;
@@ -727,6 +728,333 @@ public:
   double getAttribute(const char *name, double defaultValue) const;
 
   String urlDecode(const String &text) const;
+};
+
+class AsyncURIMatcher {
+public:
+  // Modifier flags for AsyncURIMatcher behavior
+
+  /**
+   * @brief No special matching behavior (default)
+   */
+  static constexpr uint16_t None = 0;
+
+  /**
+   * @brief Enable case-insensitive URI matching
+   *
+   * When CaseInsensitive is specified:
+   * - The URI pattern is converted to lowercase during construction
+   * - Incoming request URLs are converted to lowercase before matching
+   * - For regex matchers, the std::regex::icase flag is used
+   *
+   * Example usage:
+   * ```cpp
+   * // Matches /login, /LOGIN, /Login, /LoGiN, etc.
+   * server.on(AsyncURIMatcher::exact("/login", AsyncURIMatcher::CaseInsensitive), handler);
+   *
+   * // Matches /api/\*, /API/\*, /Api/\*, etc.
+   * server.on(AsyncURIMatcher::prefix("/api", AsyncURIMatcher::CaseInsensitive), handler);
+   *
+   * // Regex with case insensitive matching
+   * server.on(AsyncURIMatcher::regex("^/user/([a-z]+)$", AsyncURIMatcher::CaseInsensitive), handler);
+   * ```
+   *
+   * Performance note: Case conversion adds minimal overhead during construction and matching.
+   */
+  static constexpr uint16_t CaseInsensitive = (1 << 0);
+
+  // public constructors
+  AsyncURIMatcher() : _flags(All) {}
+  AsyncURIMatcher(String uri, uint16_t flags = None) : AsyncURIMatcher(std::move(uri), Auto, flags) {}
+  AsyncURIMatcher(const char *uri, uint16_t flags = None) : AsyncURIMatcher(String(uri), Auto, flags) {}
+
+#ifdef ASYNCWEBSERVER_REGEX
+  AsyncURIMatcher(const AsyncURIMatcher &c) : _value(c._value), _flags(c._flags) {
+    if (_isRegex()) {
+      pattern = new std::regex(*pattern);
+    }
+  }
+
+  AsyncURIMatcher(AsyncURIMatcher &&c) : _value(std::move(c._value)), _flags(c._flags) {
+    c._flags = 0;
+  }
+
+  ~AsyncURIMatcher() {
+    if (_isRegex()) {
+      delete pattern;
+    }
+  }
+
+  AsyncURIMatcher &operator=(const AsyncURIMatcher &r) {
+    _value = r._value;
+    if (r._isRegex()) {
+      // Allocate first before we delete our current state
+      auto p = new std::regex(*r.pattern);
+      // Safely reassign our pattern
+      if (_isRegex()) {
+        delete pattern;
+      }
+      pattern = p;
+    } else {
+      if (_isRegex()) {
+        delete pattern;
+      }
+      _flags = r._flags;
+    }
+    return *this;
+  }
+
+  AsyncURIMatcher &operator=(AsyncURIMatcher &&r) {
+    _value = std::move(r._value);
+    if (_isRegex()) {
+      delete pattern;
+    }
+    _flags = r._flags;
+    if (r._isRegex()) {
+      // We have adopted it
+      r._flags = 0;
+    }
+    return *this;
+  }
+
+#else
+  AsyncURIMatcher(const AsyncURIMatcher &) = default;
+  AsyncURIMatcher(AsyncURIMatcher &&) = default;
+  ~AsyncURIMatcher() = default;
+
+  AsyncURIMatcher &operator=(const AsyncURIMatcher &) = default;
+  AsyncURIMatcher &operator=(AsyncURIMatcher &&) = default;
+#endif
+
+  bool matches(AsyncWebServerRequest *request) const {
+    // Match-all is tested first
+    if (_flags & All) {
+      return true;
+    }
+
+#ifdef ASYNCWEBSERVER_REGEX
+    if (_isRegex()) {
+      std::smatch matches;
+      std::string s(request->url().c_str());
+      if (std::regex_search(s, matches, *pattern)) {
+        for (size_t i = 1; i < matches.size(); ++i) {
+          request->_pathParams.emplace_back(matches[i].str().c_str());
+        }
+        return true;
+      }
+      return false;
+    }
+#endif
+    String path = request->url();
+    if (_flags & (CaseInsensitive << 16)) {
+      path.toLowerCase();
+    }
+
+    // Exact match (should be the most common case)
+    if ((_flags & Exact) && (_value == path)) {
+      return true;
+    }
+
+    // Prefix match types
+    if ((_flags & Prefix) && path.startsWith(_value)) {
+      return true;
+    }
+    if ((_flags & PrefixFolder) && path.startsWith(_value + "/")) {
+      return true;
+    }
+
+    // Extension match
+    if (_flags & Extension) {
+      int split = _value.lastIndexOf("/*.");
+      if (split >= 0 && path.startsWith(_value.substring(0, split)) && path.endsWith(_value.substring(split + 2))) {
+        return true;
+      }
+    }
+
+    // we did not match
+    return false;
+  }
+
+  // static factory methods for common match types
+
+  /**
+   * @brief Create a matcher that matches all URIs unconditionally
+   * @return AsyncURIMatcher that accepts any request URL
+   *
+   * Usage: server.on(AsyncURIMatcher::all(), handler);
+   */
+  static inline AsyncURIMatcher all() {
+    return AsyncURIMatcher{{}, All, None};
+  }
+
+  /**
+   * @brief Create an exact URI matcher
+   * @param c The exact URI string to match (e.g., "/login", "/api/status")
+   * @param flags Optional modifier flags (CaseInsensitive, etc.)
+   * @return AsyncURIMatcher that matches only the exact URI
+   *
+   * Usage: server.on(AsyncURIMatcher::exact("/login"), handler);
+   * Matches: "/login"
+   * Doesn't match: "/login/", "/login-page"
+   * Doesn't match: "/LOGIN" (unless CaseInsensitive flag used)
+   */
+  static inline AsyncURIMatcher exact(String c, uint16_t flags = None) {
+    return AsyncURIMatcher{std::move(c), Exact, flags};
+  }
+
+  /**
+   * @brief Create a prefix URI matcher
+   * @param c The URI prefix to match (e.g., "/api", "/static")
+   * @param flags Optional modifier flags (CaseInsensitive, etc.)
+   * @return AsyncURIMatcher that matches URIs starting with the prefix
+   *
+   * Usage: server.on(AsyncURIMatcher::prefix("/api"), handler);
+   * Matches: "/api", "/api/users", "/api-v2", "/apitest"
+   * Note: This is pure prefix matching - does NOT require folder separator
+   */
+  static inline AsyncURIMatcher prefix(String c, uint16_t flags = None) {
+    return AsyncURIMatcher{std::move(c), Prefix, flags};
+  }
+
+  /**
+   * @brief Create a directory/folder URI matcher
+   * @param c The directory path (trailing slash automatically added if missing)
+   * @param flags Optional modifier flags (CaseInsensitive, etc.)
+   * @return AsyncURIMatcher that matches URIs under the directory
+   *
+   * Usage: server.on(AsyncURIMatcher::dir("/admin"), handler);
+   * Matches: "/admin/users", "/admin/settings", "/admin/sub/path"
+   * Doesn't match: "/admin" (exact), "/admin-panel" (no folder separator)
+   *
+   * The trailing slash is automatically added for convenience and efficiency.
+   */
+  static inline AsyncURIMatcher dir(String c, uint16_t flags = None) {
+    // Pre-calculate folder for efficiency
+    if (!c.length()) {
+      return AsyncURIMatcher{"/", Prefix, flags};
+    }
+    if (c[c.length() - 1] != '/') {
+      c.concat('/');
+    }
+    return AsyncURIMatcher{std::move(c), Prefix, flags};
+  }
+
+  /**
+   * @brief Create a file extension URI matcher
+   * @param c The pattern with wildcard extension (e.g., "/images/\*.jpg", "/docs/\*.pdf")
+   * @param flags Optional modifier flags (CaseInsensitive, etc.)
+   * @return AsyncURIMatcher that matches files with specific extensions under a path
+   *
+   * Usage: server.on(AsyncURIMatcher::ext("/images/\*.jpg"), handler);
+   * Matches: "/images/photo.jpg", "/images/gallery/pic.jpg"
+   * Doesn't match: "/images/photo.png", "/img/photo.jpg"
+   *
+   * Pattern format: "/path/\*.extension" where "*" is a literal wildcard placeholder.
+   * The path before "/\*." must match exactly, and the URI must end with the extension.
+   */
+  static inline AsyncURIMatcher ext(String c, uint16_t flags = None) {
+    return AsyncURIMatcher{std::move(c), Extension, flags};
+  }
+
+#ifdef ASYNCWEBSERVER_REGEX
+  /**
+   * @brief Create a regular expression URI matcher
+   * @param c The regex pattern string (e.g., "^/user/([0-9]+)$", "^/blog/([0-9]{4})/([0-9]{2})$")
+   * @param flags Optional modifier flags (CaseInsensitive applies to regex compilation)
+   * @return AsyncURIMatcher that matches URIs using regex with capture groups
+   *
+   * Usage: server.on(AsyncURIMatcher::regex("^/user/([0-9]+)$"), handler);
+   * Matches: "/user/123", "/user/456"
+   * Doesn't match: "/user/abc", "/user/123/profile"
+   *
+   * Captured groups can be accessed via request->pathArg(index) in the handler.
+   * Requires ASYNCWEBSERVER_REGEX to be defined during compilation.
+   * Performance note: Regex matching is slower than other match types.
+   */
+  static inline AsyncURIMatcher regex(String c, uint16_t flags = None) {
+    return AsyncURIMatcher{std::move(c), Regex, flags};
+  }
+#endif
+
+private:
+  // Matcher types
+  enum Type : uint16_t {
+    // Meta flags - low bits
+    Auto = (1 << 0),  // parse _uri at construct time and infer match type(s)
+                      // (_uri may be transformed to remove wildcards)
+
+    All = (1 << 1),           // No flags set
+    Exact = (1 << 2),         // matches equivalent to regex: ^{_uri}$
+    Prefix = (1 << 3),        // matches equivalent to regex: ^{_uri}.*
+    PrefixFolder = (1 << 4),  // matches equivalent to regex: ^{_uri}/.*
+    Extension = (1 << 5),     // non-regular match: /pattern../*.ext
+
+#ifdef ASYNCWEBSERVER_REGEX
+    NonRegex = (1 << 0),  // bit to use as pointer tag
+    Regex = (1 << 15),    // matches _url as regex
+#endif
+  };
+
+  // fields
+  String _value;
+  union {
+    intptr_t _flags;
+#ifdef ASYNCWEBSERVER_REGEX
+    // Overlay the pattern pointer storage with the flags.  It is treated as a tagged pointer:
+    // if any of the LSBs are set, it stores flags, as a valid object must be aligned and so
+    // none of the LSBs can be set in a valid pointer.
+    std::regex *pattern;
+#endif
+  };
+
+  // private functions
+#ifdef ASYNCWEBSERVER_REGEX
+  inline bool _isRegex() const {
+    static_assert(
+      (std::alignment_of<std::regex>::value % 2) == 0, "Unexpected regex type alignment - please let the ESPAsyncWebServer team know about your platform!"
+    );
+    // pattern is non-null pointer with correct alignment.
+    // We use the _flags view as it's already a integer type.
+    return _flags && !(_flags & (std::alignment_of<std::regex>::value - 1));
+  }
+#endif
+
+  // Core private constructor
+  AsyncURIMatcher(String uri, Type type = Auto, uint16_t flags = None) : _value(std::move(uri)), _flags(uint32_t(flags) << 16 | type) {
+#ifdef ASYNCWEBSERVER_REGEX
+    if ((type & Regex) || ((type & Auto) && _value.startsWith("^") && _value.endsWith("$"))) {
+      pattern = new std::regex(_value.c_str(), (flags & CaseInsensitive) ? (std::regex::icase | std::regex::optimize) : (std::regex::optimize));
+      return;  // no additional processing - flags are overwritten
+    }
+#endif
+    if (flags & CaseInsensitive) {
+      _value.toLowerCase();
+    }
+    if (type & Auto) {
+      // Inspect _value to set flags
+      // empty URI matches everything
+      if (!_value.length()) {
+        _flags = All;
+        return;  // Does not require extra bit for regex disambiguation
+      }
+      if (_value.endsWith("*")) {
+        // wildcard match with * at the end
+        _flags |= Prefix;
+        _value = _value.substring(0, _value.length() - 1);
+      } else if (_value.lastIndexOf("/*.") >= 0) {
+        // prefix match with /*.ext
+        // matches any path ending with .ext
+        // e.g. /images/*.png will match /images/pic.png and /images/2023/pic.png but not /img/pic.png
+        _flags |= Extension;
+      } else {
+        // No special values - use default of folder and exact
+        _flags |= PrefixFolder | Exact;
+      }
+    }
+#ifdef ASYNCWEBSERVER_REGEX
+    _flags |= NonRegex;  // disambiguate regex case
+#endif
+  }
 };
 
 /*
@@ -1261,16 +1589,16 @@ public:
   AsyncWebHandler &addHandler(AsyncWebHandler *handler);
   bool removeHandler(AsyncWebHandler *handler);
 
-  AsyncCallbackWebHandler &on(const char *uri, ArRequestHandlerFunction onRequest) {
-    return on(uri, HTTP_ANY, onRequest);
+  AsyncCallbackWebHandler &on(AsyncURIMatcher uri, ArRequestHandlerFunction onRequest) {
+    return on(std::move(uri), HTTP_ANY, onRequest);
   }
   AsyncCallbackWebHandler &on(
-    const char *uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest, ArUploadHandlerFunction onUpload = nullptr,
+    AsyncURIMatcher uri, WebRequestMethodComposite method, ArRequestHandlerFunction onRequest, ArUploadHandlerFunction onUpload = nullptr,
     ArBodyHandlerFunction onBody = nullptr
   );
 
 #if ASYNC_JSON_SUPPORT == 1
-  AsyncCallbackJsonWebHandler &on(const char *uri, WebRequestMethodComposite method, ArJsonRequestHandlerFunction onBody);
+  AsyncCallbackJsonWebHandler &on(AsyncURIMatcher uri, WebRequestMethodComposite method, ArJsonRequestHandlerFunction onBody);
 #endif
 
   AsyncStaticWebHandler &serveStatic(const char *uri, fs::FS &fs, const char *path, const char *cache_control = NULL);
