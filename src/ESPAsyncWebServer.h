@@ -863,7 +863,6 @@ public:
 
   bool matches(AsyncWebServerRequest *request) const {
 #ifdef ASYNCWEBSERVER_REGEX
-
     if (isRegex()) {
       std::smatch matches;
       std::string s(request->url().c_str());
@@ -921,6 +920,35 @@ private:
 #endif
   };
 };
+
+// Factory functions for AsyncURIMatcher
+// Can be used as server.on(AsyncURIMatch::exact("/foo"), [](...){...})
+namespace AsyncURIMatch {
+static inline AsyncURIMatcher exact(String c) {
+  return AsyncURIMatcher{std::move(c), URIMatchExact};
+}
+static inline AsyncURIMatcher iExact(String c) {
+  return AsyncURIMatcher{std::move(c), URIMatchExact | URIMatchCaseInsensitive};
+}
+static inline AsyncURIMatcher prefix(String c) {  // Note does *not* want a glob * - is just a prefix match
+  return AsyncURIMatcher{std::move(c), URIMatchPrefix};
+}
+static inline AsyncURIMatcher dir(String c) {
+  // Pre-calculate folder for efficiency
+  if (c[c.length() - 1] != '/') {
+    c.concat('/');
+  }
+  return AsyncURIMatcher{std::move(c), URIMatchPrefix};
+}
+static inline AsyncURIMatcher ext(String c) {  // Requires '*.' substitutor
+  return AsyncURIMatcher{std::move(c), URIMatchExtension};
+}
+#ifdef ASYNCWEBSERVER_REGEX
+static inline AsyncURIMatcher regex(String c) {
+  return AsyncURIMatcher{std::move(c), URIMatchRegex};
+}
+#endif
+}  // namespace AsyncURIMatch
 
 /*
  * FILTER :: Callback to filter AsyncWebRewrite and AsyncWebHandler (done by the Server)
