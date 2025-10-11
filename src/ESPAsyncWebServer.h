@@ -731,49 +731,143 @@ public:
   String urlDecode(const String &text) const;
 };
 
+enum AsyncURIMatchFlags {
+  // Meta flags - low bits
+  URIMatchAll = 0,          // No flags set
+  URIMatchAuto = (1 << 0),  // parse _uri at construct time and infer match type(s)
+                            // (_uri may be transformed to remove wildcards)
+  URIMatchCaseInsensitive = (1 << 1),
+
+  // Match types - high bits
+  URIMatchExact = (1 << 31),         // matches equivalent to regex: ^{_uri}$
+  URIMatchPrefix = (1 << 30),        // matches equivalent to regex: ^{_uri}.*
+  URIMatchPrefixFolder = (1 << 29),  // matches equivalent to regex: ^{_uri}/.*
+  URIMatchExtension = (1 << 28),     // non-regular match: /pattern../*.ext
+                                     // TODO - suffix match?
+
+#ifdef ASYNCWEBSERVER_REGEX
+  URIMatchRegex = (1 << 27),  // matches _url as regex
+#endif
+};
+
 class AsyncURIMatcher {
 public:
-  AsyncURIMatcher() {}
-  AsyncURIMatcher(const char *uri, bool ignoreCase = false) : _value(uri), _ignoreCase(ignoreCase) {
-    if (_ignoreCase) {
+  AsyncURIMatcher() : _flags(URIMatchAll) {}
+  AsyncURIMatcher(String uri, int flags = URIMatchAuto) : _value(std::move(uri)), _flags(flags) {
+#ifdef ASYNCWEBSERVER_REGEX
+    if ((_flags & URIMatchRegex) || ((_flags & URIMatchAuto) && _value.startsWith("^") && _value.endsWith("$"))) {
+      pattern = new std::regex(_value.c_str(), (_flags & URIMatchCaseInsensitive) ? (std::regex::icase | std::regex::optimize) : (std::regex::optimize));
+      return;  // no additional processing - flags are overwritten
+    }
+#endif
+    if (_flags & URIMatchCaseInsensitive) {
       _value.toLowerCase();
     }
-#ifdef ASYNCWEBSERVER_REGEX
-    if (isRegex()) {
-      pattern = _ignoreCase ? std::regex(_value.c_str(), std::regex::icase) : std::regex(_value.c_str());
+    if (_flags & URIMatchAuto) {
+      // Inspect _value to set flags
+      // empty URI matches everything
+      if (!_value.length()) {
+        _flags = URIMatchAll;
+        return;
+      }
+      // wildcard match with * at the end
+      if (_value.endsWith("*")) {
+        _flags |= URIMatchPrefix;
+        _value = _value.substring(0, _value.length() - 1);
+        return;
+      }
+      // prefix match with /*.ext
+      // matches any path ending with .ext
+      // e.g. /images/*.png will match /images/pic.png and /images/2023/pic.png but not /img/pic.png
+      if (_value.lastIndexOf("/*.") > 0) {
+        _flags |= URIMatchExtension;
+        return;
+      }
+
+      // No special values - use default of folder and exact
+      _flags |= URIMatchPrefixFolder | URIMatchExact;
     }
+#ifdef ASYNCWEBSERVER_REGEX
+    _flags |= URIMatchAuto;  // disambiguate regex case
 #endif
   }
-  AsyncURIMatcher(String uri, bool ignoreCase = false) : _value(std::move(uri)), _ignoreCase(ignoreCase) {
-    if (_ignoreCase) {
-      _value.toLowerCase();
-    }
+  AsyncURIMatcher(const char *uri, int flags = URIMatchAuto) : AsyncURIMatcher(String(uri), flags) {}
+
 #ifdef ASYNCWEBSERVER_REGEX
-    if (isRegex()) {
-      pattern = _ignoreCase ? std::regex(_value.c_str(), std::regex::icase) : std::regex(_value.c_str());
-    }
-#endif
+  inline bool isRegex() const {
+    static_assert(
+      (std::alignment_of<std::regex>::value % 2) == 0, "Unexpected regex type alignment - please let the ESPAsyncWebServer team know about your platform!"
+    );
+    return !(_flags & URIMatchAuto);  // pattern is a pointer
   }
 
+  AsyncURIMatcher(const AsyncURIMatcher &c) : _value(c._value), _flags(c._flags) {
+    if (isRegex()) {
+      pattern = new std::regex(*pattern);
+    }
+  }
+
+  AsyncURIMatcher(AsyncURIMatcher &&c) : _value(std::move(c._value)), _flags(c._flags) {
+    c._flags = 0;
+  }
+
+  ~AsyncURIMatcher() {
+    if (isRegex()) {
+      delete pattern;
+    }
+  }
+
+  AsyncURIMatcher &operator=(const AsyncURIMatcher &r) {
+    _value = r._value;
+    if (r.isRegex()) {
+      // Allocate first before we delete our current state
+      auto p = new std::regex(*r.pattern);
+      // Safely reassign our pattern
+      if (isRegex()) {
+        delete pattern;
+      }
+      pattern = p;
+    } else {
+      if (isRegex()) {
+        delete pattern;
+      }
+      _flags = r._flags;
+    }
+    return *this;
+  }
+
+  AsyncURIMatcher &operator=(AsyncURIMatcher &&r) {
+    _value = std::move(r._value);
+    if (isRegex()) {
+      delete pattern;
+    }
+    _flags = r._flags;
+    if (r.isRegex()) {
+      // We have adopted it
+      r._flags = 0;
+    }
+    return *this;
+  }
+
+#else
+  inline bool isRegex() const {
+    return false;
+  }
   AsyncURIMatcher(const AsyncURIMatcher &) = default;
   AsyncURIMatcher(AsyncURIMatcher &&) = default;
   ~AsyncURIMatcher() = default;
 
   AsyncURIMatcher &operator=(const AsyncURIMatcher &) = default;
   AsyncURIMatcher &operator=(AsyncURIMatcher &&) = default;
-
-#ifdef ASYNCWEBSERVER_REGEX
-  bool isRegex() const {
-    return _value.startsWith("^") && _value.endsWith("$");
-  }
 #endif
 
   bool matches(AsyncWebServerRequest *request) const {
 #ifdef ASYNCWEBSERVER_REGEX
+
     if (isRegex()) {
       std::smatch matches;
       std::string s(request->url().c_str());
-      if (std::regex_search(s, matches, pattern)) {
+      if (std::regex_search(s, matches, *pattern)) {
         for (size_t i = 1; i < matches.size(); ++i) {
           request->_pathParams.emplace_back(matches[i].str().c_str());
         }
@@ -784,36 +878,34 @@ public:
 #endif
 
     // empty URI matches everything
-    if (!_value.length()) {
+    if (_flags & URIMatchAll) {
       return true;
     }
 
     String path = request->url();
-    if (_ignoreCase) {
+    if (_flags & URIMatchCaseInsensitive) {
       path.toLowerCase();
     }
 
-    // exact match (should be the most common case)
-    if (_value == path) {
+    // Exact match (should be the most common case)
+    if ((_flags & URIMatchExact) && (_value == path)) {
       return true;
     }
 
-    // wildcard match with * at the end
-    if (_value.endsWith("*")) {
-      return path.startsWith(_value.substring(0, _value.length() - 1));
-    }
-
-    // prefix match with /*.ext
-    // matches any path ending with .ext
-    // e.g. /images/*.png will match /images/pic.png and /images/2023/pic.png but not /img/pic.png
-    if (_value.startsWith("/*.")) {
-      return path.endsWith(_value.substring(_value.lastIndexOf(".")));
-    }
-
-    // finally check for prefix match with / at the end
-    // e.g. /images will also match /images/pic.png and /images/2023/pic.png but not /img/pic.png
-    if (path.startsWith(_value + "/")) {
+    // Prefix match types
+    if ((_flags & URIMatchPrefix) && path.startsWith(_value)) {
       return true;
+    }
+    if ((_flags & URIMatchPrefixFolder) && path.startsWith(_value + "/")) {
+      return true;
+    }
+
+    // Extension match
+    if (_flags & URIMatchExtension) {
+      int split = _value.lastIndexOf("/*.");
+      if (path.startsWith(_value.substring(0, split)) && path.endsWith(_value.substring(split + 2))) {
+        return true;
+      }
     }
 
     // we did not match
@@ -822,10 +914,12 @@ public:
 
 private:
   String _value;
-  bool _ignoreCase = false;
+  union {
+    intptr_t _flags;
 #ifdef ASYNCWEBSERVER_REGEX
-  std::regex pattern;
+    std::regex *pattern;
 #endif
+  };
 };
 
 /*
