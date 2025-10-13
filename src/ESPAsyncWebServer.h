@@ -764,19 +764,19 @@ public:
   static constexpr uint16_t CaseInsensitive = (1 << 0);
 
   // public constructors
-  AsyncURIMatcher() : _flags(All) {}
+  AsyncURIMatcher() : _matchData(Default) {}
   AsyncURIMatcher(String uri, uint16_t flags = None) : AsyncURIMatcher(std::move(uri), Auto, flags) {}
   AsyncURIMatcher(const char *uri, uint16_t flags = None) : AsyncURIMatcher(String(uri), Auto, flags) {}
 
 #ifdef ASYNCWEBSERVER_REGEX
-  AsyncURIMatcher(const AsyncURIMatcher &c) : _value(c._value), _flags(c._flags) {
+  AsyncURIMatcher(const AsyncURIMatcher &c) : _value(c._value), _matchData(c._matchData) {
     if (_isRegex()) {
       pattern = new std::regex(*pattern);
     }
   }
 
-  AsyncURIMatcher(AsyncURIMatcher &&c) : _value(std::move(c._value)), _flags(c._flags) {
-    c._flags = 0;
+  AsyncURIMatcher(AsyncURIMatcher &&c) : _value(std::move(c._value)), _matchData(c._matchData) {
+    c._matchData = Default;
   }
 
   ~AsyncURIMatcher() {
@@ -799,7 +799,7 @@ public:
       if (_isRegex()) {
         delete pattern;
       }
-      _flags = r._flags;
+      _matchData = r._matchData;
     }
     return *this;
   }
@@ -809,10 +809,10 @@ public:
     if (_isRegex()) {
       delete pattern;
     }
-    _flags = r._flags;
+    _matchData = r._matchData;
     if (r._isRegex()) {
       // We have adopted it
-      r._flags = 0;
+      r._matchData = Default;
     }
     return *this;
   }
@@ -827,11 +827,7 @@ public:
 #endif
 
   bool matches(AsyncWebServerRequest *request) const {
-    // Match-all is tested first
-    if (_flags & All) {
-      return true;
-    }
-
+    intptr_t matchData = _matchData;
 #ifdef ASYNCWEBSERVER_REGEX
     if (_isRegex()) {
       std::smatch matches;
@@ -843,36 +839,34 @@ public:
         return true;
       }
       return false;
+    } else {
+      matchData = matchData >> 1;  // shift off disambiguation bit
     }
 #endif
+    Type type = static_cast<Type>(matchData & 0xFFFF);  // Type is lower 16 bits
+    // Check All case first
+    if (type == All) {
+      return true;
+    }
+
     String path = request->url();
-    if (_flags & (CaseInsensitive << 16)) {
+    if (matchData & (CaseInsensitive << 16)) {
       path.toLowerCase();
     }
 
-    // Exact match (should be the most common case)
-    if ((_flags & Exact) && (_value == path)) {
-      return true;
-    }
-
-    // Prefix match types
-    if ((_flags & Prefix) && path.startsWith(_value)) {
-      return true;
-    }
-    if ((_flags & PrefixFolder) && path.startsWith(_value + "/")) {
-      return true;
-    }
-
-    // Extension match
-    if (_flags & Extension) {
-      int split = _value.lastIndexOf("/*.");
-      if (split >= 0 && path.startsWith(_value.substring(0, split)) && path.endsWith(_value.substring(split + 2))) {
-        return true;
+    switch (type) {
+      case Exact:  return (_value == path);
+      case Prefix: return path.startsWith(_value);
+      case Extension:
+      {
+        int split = _value.lastIndexOf("/*.");
+        return (split >= 0 && path.startsWith(_value.substring(0, split)) && path.endsWith(_value.substring(split + 2)));
       }
+      case BackwardsCompatible: return (_value == path) || path.startsWith(_value + "/");
+      default:
+        // assert("Invalid type");
+        return false;
     }
-
-    // we did not match
-    return false;
   }
 
   // static factory methods for common match types
@@ -980,25 +974,27 @@ private:
   // Matcher types
   enum Type : uint16_t {
     // Meta flags - low bits
-    Auto = (1 << 0),  // parse _uri at construct time and infer match type(s)
-                      // (_uri may be transformed to remove wildcards)
-
-    All = (1 << 1),           // No flags set
-    Exact = (1 << 2),         // matches equivalent to regex: ^{_uri}$
-    Prefix = (1 << 3),        // matches equivalent to regex: ^{_uri}.*
-    PrefixFolder = (1 << 4),  // matches equivalent to regex: ^{_uri}/.*
-    Extension = (1 << 5),     // non-regular match: /pattern../*.ext
+    Auto,                 // parse _uri at construct time and infer match type(s)
+                          // (_uri may be transformed to remove wildcards)
+    All,                  // matches everything
+    Exact,                // matches equivalent to regex: ^{_uri}$
+    Prefix,               // matches equivalent to regex: ^{_uri}.*
+    Extension,            // non-regular match: /pattern../*.ext
+    BackwardsCompatible,  // matches equivalent to regex: ^{_uri}(/.*)?$
 
 #ifdef ASYNCWEBSERVER_REGEX
+    Regex,                // matches _url as regex
     NonRegex = (1 << 0),  // bit to use as pointer tag
-    Regex = (1 << 15),    // matches _url as regex
+    Default = (All << 1) | NonRegex,
+#else
+    Default = All
 #endif
   };
 
   // fields
   String _value;
   union {
-    intptr_t _flags;
+    intptr_t _matchData;  // type and flags packed together
 #ifdef ASYNCWEBSERVER_REGEX
     // Overlay the pattern pointer storage with the flags.  It is treated as a tagged pointer:
     // if any of the LSBs are set, it stores flags, as a valid object must be aligned and so
@@ -1014,15 +1010,15 @@ private:
       (std::alignment_of<std::regex>::value % 2) == 0, "Unexpected regex type alignment - please let the ESPAsyncWebServer team know about your platform!"
     );
     // pattern is non-null pointer with correct alignment.
-    // We use the _flags view as it's already a integer type.
-    return _flags && !(_flags & (std::alignment_of<std::regex>::value - 1));
+    // We use the _matchData view as it's already a integer type.
+    return _matchData && !(_matchData & (std::alignment_of<std::regex>::value - 1));
   }
 #endif
 
   // Core private constructor
-  AsyncURIMatcher(String uri, Type type = Auto, uint16_t flags = None) : _value(std::move(uri)), _flags(uint32_t(flags) << 16 | type) {
+  AsyncURIMatcher(String uri, Type type = Auto, uint16_t flags = None) : _value(std::move(uri)) {
 #ifdef ASYNCWEBSERVER_REGEX
-    if ((type & Regex) || ((type & Auto) && _value.startsWith("^") && _value.endsWith("$"))) {
+    if ((type == Regex) || ((type == Auto) && _value.startsWith("^") && _value.endsWith("$"))) {
       pattern = new std::regex(_value.c_str(), (flags & CaseInsensitive) ? (std::regex::icase | std::regex::optimize) : (std::regex::optimize));
       return;  // no additional processing - flags are overwritten
     }
@@ -1030,29 +1026,28 @@ private:
     if (flags & CaseInsensitive) {
       _value.toLowerCase();
     }
-    if (type & Auto) {
+    if (type == Auto) {
       // Inspect _value to set flags
       // empty URI matches everything
       if (!_value.length()) {
-        _flags = All;
-        return;  // Does not require extra bit for regex disambiguation
-      }
-      if (_value.endsWith("*")) {
+        type = All;
+      } else if (_value.endsWith("*")) {
         // wildcard match with * at the end
-        _flags |= Prefix;
+        type = Prefix;
         _value = _value.substring(0, _value.length() - 1);
       } else if (_value.lastIndexOf("/*.") >= 0) {
         // prefix match with /*.ext
         // matches any path ending with .ext
         // e.g. /images/*.png will match /images/pic.png and /images/2023/pic.png but not /img/pic.png
-        _flags |= Extension;
+        type = Extension;
       } else {
         // No special values - use default of folder and exact
-        _flags |= PrefixFolder | Exact;
+        type = BackwardsCompatible;
       }
     }
+    _matchData = uint32_t(flags) << 16 | type;
 #ifdef ASYNCWEBSERVER_REGEX
-    _flags |= NonRegex;  // disambiguate regex case
+    _matchData = (_matchData << 1) | NonRegex;  // use lsb to disambiguate from regex pointer
 #endif
   }
 };
