@@ -23,35 +23,41 @@
 
 #include <memory>
 #include <Arduino.h>
+
 #ifdef ESP32
+
+#include <mutex>
 #include <AsyncTCP.h>
-#if !defined(WS_MAX_QUEUED_MESSAGES) || WS_MAX_QUEUED_MESSAGES < 1
-#undef WS_MAX_QUEUED_MESSAGES
-#define WS_MAX_QUEUED_MESSAGES 32
-#endif // !defined(WS_MAX_QUEUED_MESSAGES) || WS_MAX_QUEUED_MESSAGES < 1
-#else
+#define DEFAULT_MAX_WS_CLIENTS 8
+#define DEFAULT_WS_MAX_QUEUED_MESSAGES 32
+
+typedef std::recursive_mutex AsyncWebSocketMutex;
+typedef std::unique_lock<AsyncWebSocketMutex> AsyncWebSocketUniqueLock;
+
+#else /* !ESP32 */
 #include <ESPAsyncTCP.h>
-#if !defined(WS_MAX_QUEUED_MESSAGES) || WS_MAX_QUEUED_MESSAGES < 1
-#undef WS_MAX_QUEUED_MESSAGES
-#define WS_MAX_QUEUED_MESSAGES 8
-#endif // !defined(WS_MAX_QUEUED_MESSAGES) || WS_MAX_QUEUED_MESSAGES < 1
-#endif
+#define DEFAULT_WS_MAX_QUEUED_MESSAGES 8
+#define DEFAULT_MAX_WS_CLIENTS 4
+
+#include <Hash.h>
+#ifdef CRYPTO_HASH_h // include Hash.h from espressif framework if the first include was from the crypto library
+#include <../src/Hash.h>
+#endif /* CRYPTO_HASH_h */
+
+// Explicit locking is unnecessary in cooperative multitasking environment
+struct AsyncWebSocketMutex {};
+struct AsyncWebSocketUniqueLock {};
+
+#endif /* ESP32 */
+
 #include <ESPAsyncWebServer.h>
 
 #include "DynamicBuffer.h"
 
-#ifdef ESP8266
-#include <Hash.h>
-#ifdef CRYPTO_HASH_h // include Hash.h from espressif framework if the first include was from the crypto library
-#include <../src/Hash.h>
-#endif
-#endif
-
-#ifdef ESP32
-#define DEFAULT_MAX_WS_CLIENTS 8
-#else
-#define DEFAULT_MAX_WS_CLIENTS 4
-#endif
+#if !defined(WS_MAX_QUEUED_MESSAGES) || WS_MAX_QUEUED_MESSAGES < 1
+#undef WS_MAX_QUEUED_MESSAGES
+#define WS_MAX_QUEUED_MESSAGES DEFAULT_WS_MAX_QUEUED_MESSAGES
+#endif // !defined(WS_MAX_QUEUED_MESSAGES) || WS_MAX_QUEUED_MESSAGES < 1
 
 #define WS_MAX_HEADER_LEN 16
 
@@ -121,55 +127,31 @@ class AsyncWebSocketMessageBuffer {
     friend AsyncWebSocketClient;
 };
 
-
 class AsyncWebSocketMessage {
   protected:
     uint8_t _opcode;
     bool _mask;
     AwsMessageStatus _status;
-  public:
-    AsyncWebSocketMessage():_opcode(WS_TEXT),_mask(false),_status(WS_MSG_ERROR){}
-    virtual ~AsyncWebSocketMessage(){}
-    virtual void ack(size_t len __attribute__((unused)), uint32_t time __attribute__((unused))){}
-    virtual size_t send(AsyncClient *client __attribute__((unused))){ return 0; }
-    virtual bool finished(){ return _status != WS_MSG_SENDING; }
-    virtual bool betweenFrames() const { return false; }
-};
-
-class AsyncWebSocketBasicMessage: public AsyncWebSocketMessage {
-  private:
-    size_t _len;
-    size_t _attempted;
-    size_t _sent;    
-    size_t _ack;
-    size_t _acked;
-    uint8_t * _data;
-public:
-    AsyncWebSocketBasicMessage(const char * data, size_t len, uint8_t opcode=WS_TEXT, bool mask=false);
-    AsyncWebSocketBasicMessage(uint8_t opcode=WS_TEXT, bool mask=false);
-    virtual ~AsyncWebSocketBasicMessage() override;
-    virtual bool betweenFrames() const override { return _acked == _ack; }
-    virtual void ack(size_t len, uint32_t time) override ;
-    virtual size_t send(AsyncClient *client) override ;
-};
-
-class AsyncWebSocketMultiMessage: public AsyncWebSocketMessage {
-  private:
     size_t _attempted;
     size_t _sent;
     size_t _ack;
     size_t _acked;
     AsyncWebSocketSharedBuffer _WSbuffer; 
 public:
-    AsyncWebSocketMultiMessage(AsyncWebSocketSharedBuffer buffer, uint8_t opcode=WS_TEXT, bool mask=false); 
-    AsyncWebSocketMultiMessage(AsyncWebSocketBuffer buffer, uint8_t opcode=WS_TEXT, bool mask=false) : AsyncWebSocketMultiMessage(AsyncWebSocketSharedBuffer(std::move(buffer)), opcode, mask){}; 
-    virtual ~AsyncWebSocketMultiMessage() override;
-    virtual bool betweenFrames() const override { return _acked == _ack; }
-    virtual void ack(size_t len, uint32_t time) override ;
-    virtual size_t send(AsyncClient *client) override ;
+    AsyncWebSocketMessage(AsyncWebSocketSharedBuffer buffer, uint8_t opcode=WS_TEXT, bool mask=false); 
+    AsyncWebSocketMessage(AsyncWebSocketBuffer buffer, uint8_t opcode=WS_TEXT, bool mask=false) : AsyncWebSocketMessage(AsyncWebSocketSharedBuffer(std::move(buffer)), opcode, mask){}; 
+    AsyncWebSocketMessage(const char * data, size_t len, uint8_t opcode=WS_TEXT, bool mask=false) : AsyncWebSocketMessage(AsyncWebSocketSharedBuffer(data, len), opcode, mask){}; 
+    ~AsyncWebSocketMessage();
+    bool finished() const { return _status != WS_MSG_SENDING; }
+    bool betweenFrames() const { return _acked == _ack; }
+    void ack(size_t len, uint32_t time) ;
+    size_t send(AsyncClient *client);
     
-    AsyncWebSocketMultiMessage* clone() const;  // Returns this message with a copy of the data buffer if required.
+    AsyncWebSocketMessage* clone() const;  // Returns this message with a copy of the data buffer if required.
 };
+
+typedef AsyncWebSocketMessage AsyncWebSocketBasicMessage;
+typedef AsyncWebSocketMessage AsyncWebSocketMultiMessage;
 
 class AsyncWebSocketClient {
   private:
@@ -177,6 +159,7 @@ class AsyncWebSocketClient {
     AsyncWebSocket *_server;
     uint32_t _clientId;
     AwsClientStatus _status;
+    mutable AsyncWebSocketMutex _mutex;
 
     LinkedList<AsyncWebSocketControl *> _controlQueue;
     LinkedList<AsyncWebSocketMessage *> _messageQueue;
@@ -193,10 +176,12 @@ class AsyncWebSocketClient {
     void _queueControl(AsyncWebSocketControl *controlMessage);
     void _runQueue();
 
+    friend class AsyncWebSocket;
+
   public:
     void *_tempObject;
 
-    AsyncWebSocketClient(AsyncWebServerRequest *request, AsyncWebSocket *server);
+    AsyncWebSocketClient(AsyncWebServerRequest *request);
     ~AsyncWebSocketClient();
 
     //client id increments for the given server
@@ -224,7 +209,6 @@ class AsyncWebSocketClient {
     //data packets
     void message(AsyncWebSocketMessage *message){ _queueMessage(message); }
     bool queueIsFull();
-    uint16_t queueLength();
 
     size_t printf(const char *format, ...)  __attribute__ ((format (printf, 2, 3)));
 #ifndef ESP32
@@ -264,13 +248,17 @@ typedef std::function<void(AsyncWebSocket * server, AsyncWebSocketClient * clien
 //WebServer Handler implementation that plays the role of a socket server
 class AsyncWebSocket: public AsyncWebHandler {
   public:
-    typedef LinkedList<AsyncWebSocketClient *> AsyncWebSocketClientLinkedList;
+    typedef LinkedList<std::shared_ptr<AsyncWebSocketClient>> AsyncWebSocketClientLinkedList;
   private:
     String _url;
+    mutable AsyncWebSocketMutex _mutex;
     AsyncWebSocketClientLinkedList _clients;
     uint32_t _cNextId;
     AwsEventHandler _eventHandler;
     bool _enabled;
+
+    friend class AsyncWebSocketClient;
+    friend class AsyncWebSocketResponse;
 
   public:
     AsyncWebSocket(const String& url);
@@ -282,7 +270,7 @@ class AsyncWebSocket: public AsyncWebHandler {
     bool availableForWrite(uint32_t id);
 
     size_t count() const;
-    AsyncWebSocketClient * client(uint32_t id);
+    std::shared_ptr<AsyncWebSocketClient> client(uint32_t id);
     bool hasClient(uint32_t id){ return client(id) != NULL; }
 
     void close(uint32_t id, uint16_t code=0, const char * message=NULL);
@@ -340,22 +328,19 @@ class AsyncWebSocket: public AsyncWebHandler {
       _eventHandler = handler;
     }
 
-    //system callbacks (do not call)
-    uint32_t _getNextId(){ return _cNextId++; }
-    void _addClient(AsyncWebSocketClient * client);
-    void _handleDisconnect(AsyncWebSocketClient * client);
-    void _handleEvent(AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
-    virtual bool canHandle(AsyncWebServerRequest *request) override final;
-    virtual void handleRequest(AsyncWebServerRequest *request) override final;
-
-
     // Legacy message buffer factories
     // Instead, allocate the object directly with make_shared<>
     AsyncWebSocketMessageBuffer* makeBuffer(size_t size = 0) __attribute__((deprecated)); 
     AsyncWebSocketMessageBuffer* makeBuffer(const uint8_t * data, size_t size)  __attribute__((deprecated));
-    void _cleanBuffers() {};
 
-    const AsyncWebSocketClientLinkedList& getClients() const;
+  private:
+    //system callbacks (do not call)
+    uint32_t _getNextId(){ return _cNextId++; }
+    void _addClient(std::shared_ptr<AsyncWebSocketClient> client);
+    void _handleDisconnect(AsyncWebSocketClient * client);
+    void _handleEvent(AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
+    virtual bool canHandle(AsyncWebServerRequest *request) override final;
+    virtual void handleRequest(AsyncWebServerRequest *request) override final;
 };
 
 //WebServer response to authenticate the socket and detach the tcp client from the web server request

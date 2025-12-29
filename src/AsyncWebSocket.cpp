@@ -149,147 +149,29 @@ class AsyncWebSocketControl {
     }
 };
 
+
 /*
- * Basic Buffered Message
+ * AsyncWebSocketMessage
  */
 
 
-AsyncWebSocketBasicMessage::AsyncWebSocketBasicMessage(const char * data, size_t len, uint8_t opcode, bool mask)
-  :_len(len)
+AsyncWebSocketMessage::AsyncWebSocketMessage(AsyncWebSocketSharedBuffer buffer, uint8_t opcode, bool mask)
+  :
+  _opcode(opcode & 0x07)
+  ,_mask(mask)
+  ,_status(buffer ? WS_MSG_SENDING : WS_MSG_ERROR)
   ,_attempted(0)
-  ,_sent(0)
-  ,_ack(0)
-  ,_acked(0)
-{
-  _opcode = opcode & 0x07;
-  _mask = mask;
-  _data = (uint8_t*)malloc(_len+1);
-  if(_data == NULL){
-    _len = 0;
-    _status = WS_MSG_ERROR;
-  } else {
-    _status = WS_MSG_SENDING;
-    memcpy(_data, data, _len);
-    _data[_len] = 0;
-  }
-}
-AsyncWebSocketBasicMessage::AsyncWebSocketBasicMessage(uint8_t opcode, bool mask)
-  :_len(0)
-  ,_attempted(0)
-  ,_sent(0)
-  ,_ack(0)
-  ,_acked(0)
-  ,_data(NULL)
-{
-  _opcode = opcode & 0x07;
-  _mask = mask;
-  
-}
-
-
-AsyncWebSocketBasicMessage::~AsyncWebSocketBasicMessage() {
-  if(_data != NULL)
-    free(_data);
-}
-
- void AsyncWebSocketBasicMessage::ack(size_t len, uint32_t time)  {
-   (void)time;
-  _acked += len;
-  if(_sent == _len && _acked == _ack){
-    _status = WS_MSG_SENT;
-  }
-}
- size_t AsyncWebSocketBasicMessage::send(AsyncClient *client)  {
-  DEBUG_PRINTFP("BasicMessage %d - %d (%d/%d/%d - %d/%d)", (intptr_t) this, _status, _sent, _attempted, _len, _acked, _ack);
-  if(_status != WS_MSG_SENDING)
-    return 0;
-  if(_acked < _ack){
-    return 0;
-  }
-  if(_sent == _len){
-    if(_acked == _ack)
-      _status = WS_MSG_SENT;
-    return 0;
-  }
-  if(_sent > _len){
-      _status = WS_MSG_ERROR;
-      return 0;
-  }
-  if (_sent < _attempted) {
-    // Frame was truncated
-    size_t sent = client->write((const char*)(_data + _sent), _attempted - _sent);
-    _ack += sent;
-    _sent += sent;
-    return sent;
-  }
-
-  size_t toSend = _len - _sent;
-  size_t window = webSocketSendFrameWindow(client);
-
-  if(window < toSend) {
-      toSend = window;
-  }
-
-  _attempted += toSend;
-  _sent += toSend;
-  _ack += toSend + webSocketHeaderLength(_mask, toSend);
-
-  bool final = (_sent == _len);
-  uint8_t* dPtr = (uint8_t*)(_data + (_sent - toSend));
-  uint8_t opCode = (toSend && _sent == toSend)?_opcode:(uint8_t)WS_CONTINUATION;
-
-  size_t sent = webSocketSendFrame(client, final, opCode, _mask, dPtr, toSend);
-  _status = WS_MSG_SENDING;
-  if(toSend && sent != toSend){
-      _attempted -= (toSend - sent);
-      _ack -= (toSend - sent);
-      // TODO - what if header never sent
-  }
-  return sent;
-}
-
-// bool AsyncWebSocketBasicMessage::reserve(size_t size) { 
-//   if (size) {
-//     _data = (uint8_t*)malloc(size +1);
-//     if (_data) {
-//       memset(_data, 0, size); 
-//       _len = size; 
-//       _status = WS_MSG_SENDING;
-//       return true; 
-//     }
-//   }
-//   return false; 
-//  }
-
-
-/*
- * AsyncWebSocketMultiMessage Message
- */
-
-
-AsyncWebSocketMultiMessage::AsyncWebSocketMultiMessage(AsyncWebSocketSharedBuffer buffer, uint8_t opcode, bool mask)
-  :_attempted(0)
   ,_sent(0)
   ,_ack(0)
   ,_acked(0)
   ,_WSbuffer(std::move(buffer))
-{
-  _opcode = opcode & 0x07;
-  _mask = mask;
-
-  if (_WSbuffer) {
-    _status = WS_MSG_SENDING;
-    //ets_printf("M: %u\n", _len);
-  } else {
-    _status = WS_MSG_ERROR;
-  }
-} 
+{} 
 
 
-AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
+AsyncWebSocketMessage::~AsyncWebSocketMessage() {
 }
 
- void AsyncWebSocketMultiMessage::ack(size_t len, uint32_t time)  {
+ void AsyncWebSocketMessage::ack(size_t len, uint32_t time)  {
    (void)time;
   _acked += len;
   if(_sent >= _WSbuffer.size() && _acked >= _ack){
@@ -297,7 +179,7 @@ AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
   }
   //ets_printf("A: %u\n", len);
 }
- size_t AsyncWebSocketMultiMessage::send(AsyncClient *client)  {
+ size_t AsyncWebSocketMessage::send(AsyncClient *client)  {
   DEBUG_PRINTFP("MultiMessage %d - %d (%d/%d/%d - %d/%d)", (intptr_t) this, _status, _sent, _attempted, _WSbuffer.size(), _acked, _ack);
   if(_status != WS_MSG_SENDING)
     return 0;
@@ -351,11 +233,11 @@ AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
 }
 
 
-AsyncWebSocketMultiMessage* AsyncWebSocketMultiMessage::clone() const {
+AsyncWebSocketMessage* AsyncWebSocketMessage::clone() const {
   // Safely instantiate a new copy of this message.
   // If we aren't masking, we can share the buffer - otherwise copy the buffer contents
   if (_mask && _WSbuffer) {
-    return new AsyncWebSocketMultiMessage(SharedBuffer(_WSbuffer.copy()), _opcode, _mask);
+    return new AsyncWebSocketMessage(SharedBuffer(_WSbuffer.copy()), _opcode, _mask);
   } else {
     return new AsyncWebSocketMultiMessage(_WSbuffer, _opcode, _mask);
   }
@@ -368,29 +250,19 @@ AsyncWebSocketMultiMessage* AsyncWebSocketMultiMessage::clone() const {
  const char AWSC_PING_PAYLOAD[] PROGMEM = "awscPING";
  constexpr size_t AWSC_PING_PAYLOAD_LEN = sizeof(AWSC_PING_PAYLOAD);
 
-AsyncWebSocketClient::AsyncWebSocketClient(AsyncWebServerRequest *request, AsyncWebSocket *server)
+AsyncWebSocketClient::AsyncWebSocketClient(AsyncWebServerRequest *request)
   : _controlQueue([](AsyncWebSocketControl *c){ delete  c; })
   , _messageQueue([](AsyncWebSocketMessage *m){ delete  m; })
   , _tempObject(NULL)
 {
   _client = request->client();
-  _server = server;
-  _clientId = _server->_getNextId();
+  _server = nullptr;
+  _clientId = 0;
   _status = WS_CONNECTED;
   _pstate = 0;
   _partialHeaderLen = 0;
   _lastMessageTime = millis();
   _keepAlivePeriod = 0;
-  _client->setRxTimeout(0);
-  _client->onError([](void *r, AsyncClient* c, int8_t error){ (void)c; ((AsyncWebSocketClient*)(r))->_onError(error); }, this);
-  _client->onAck([](void *r, AsyncClient* c, size_t len, uint32_t time){ (void)c; ((AsyncWebSocketClient*)(r))->_onAck(len, time); }, this);
-  _client->onDisconnect([](void *r, AsyncClient* c){ ((AsyncWebSocketClient*)(r))->_onDisconnect(); delete c; }, this);
-  _client->onTimeout([](void *r, AsyncClient* c, uint32_t time){ (void)c; ((AsyncWebSocketClient*)(r))->_onTimeout(time); }, this);
-  _client->onData([](void *r, AsyncClient* c, void *buf, size_t len){ (void)c; ((AsyncWebSocketClient*)(r))->_onData(buf, len); }, this);
-  _client->onPoll([](void *r, AsyncClient* c){ (void)c; ((AsyncWebSocketClient*)(r))->_onPoll(); }, this);
-  _server->_addClient(this);
-  _server->_handleEvent(this, WS_EVT_CONNECT, request, NULL, 0);
-  delete request;
 }
 
 AsyncWebSocketClient::~AsyncWebSocketClient(){
@@ -400,6 +272,7 @@ AsyncWebSocketClient::~AsyncWebSocketClient(){
 }
 
 void AsyncWebSocketClient::_onAck(size_t len, uint32_t time){
+  AsyncWebSocketUniqueLock lock(_mutex);
   _lastMessageTime = millis();
   if(!_controlQueue.isEmpty()){
     auto head = _controlQueue.front();
@@ -421,6 +294,7 @@ void AsyncWebSocketClient::_onAck(size_t len, uint32_t time){
 }
 
 void AsyncWebSocketClient::_onPoll(){
+  AsyncWebSocketUniqueLock lock(_mutex);
   if(_client->canSend() && (!_controlQueue.isEmpty() || !_messageQueue.isEmpty())){
     _runQueue();
   } else if(_keepAlivePeriod > 0 && _controlQueue.isEmpty() && _messageQueue.isEmpty() && (millis() - _lastMessageTime) >= _keepAlivePeriod){
@@ -441,22 +315,22 @@ void AsyncWebSocketClient::_runQueue(){
 }
 
 bool AsyncWebSocketClient::queueIsFull(){
+  AsyncWebSocketUniqueLock lock(_mutex);
   if((_messageQueue.length() >= WS_MAX_QUEUED_MESSAGES) || (_status != WS_CONNECTED) ) return true;
   return false;
 }
 
-//Added by Aircoookie for WLED
-uint16_t AsyncWebSocketClient::queueLength(){
-  return _messageQueue.length();
-}
-
 void AsyncWebSocketClient::_queueMessage(AsyncWebSocketMessage *dataMessage){
-  if(dataMessage == NULL)
+  if(_client == nullptr || dataMessage == nullptr)
     return;
+
+  AsyncWebSocketUniqueLock lock(_mutex);
+
   if(_status != WS_CONNECTED){
     delete dataMessage;
     return;
   }
+
   if(_messageQueue.length() >= WS_MAX_QUEUED_MESSAGES){
       ets_printf("ERR WSq\n");
       delete dataMessage;
@@ -468,8 +342,10 @@ void AsyncWebSocketClient::_queueMessage(AsyncWebSocketMessage *dataMessage){
 }
 
 void AsyncWebSocketClient::_queueControl(AsyncWebSocketControl *controlMessage){
-  if(controlMessage == NULL)
+  if (_client == nullptr || controlMessage == nullptr)
     return;
+
+  AsyncWebSocketUniqueLock lock(_mutex);
   _controlQueue.add(controlMessage);
   if(_client->canSend())
     _runQueue();
@@ -844,7 +720,7 @@ uint16_t AsyncWebSocketClient::remotePort() {
 
 AsyncWebSocket::AsyncWebSocket(const String& url)
   :_url(url)
-  ,_clients([](AsyncWebSocketClient *c){ delete c; })
+  ,_clients([](const std::shared_ptr<AsyncWebSocketClient>&){ })
   ,_cNextId(1)
   ,_enabled(true)
 {
@@ -859,18 +735,22 @@ void AsyncWebSocket::_handleEvent(AsyncWebSocketClient * client, AwsEventType ty
   }
 }
 
-void AsyncWebSocket::_addClient(AsyncWebSocketClient * client){
-  _clients.add(client);
+void AsyncWebSocket::_addClient(std::shared_ptr<AsyncWebSocketClient> client){
+  AsyncWebSocketUniqueLock lock(_mutex);
+  client->_server = this;
+  client->_clientId = _getNextId();
+  _clients.add(std::move(client));
 }
 
-void AsyncWebSocket::_handleDisconnect(AsyncWebSocketClient * client){
-  
-  _clients.remove_first([=](AsyncWebSocketClient * c){
-    return c->id() == client->id();
+void AsyncWebSocket::_handleDisconnect(AsyncWebSocketClient* client){
+  AsyncWebSocketUniqueLock lock(_mutex);
+  _clients.remove_first([=](std::shared_ptr<AsyncWebSocketClient> c){
+    return c.get() == client;
   });
 }
 
 bool AsyncWebSocket::availableForWriteAll(){
+  AsyncWebSocketUniqueLock lock(_mutex);
   for(const auto& c: _clients){
     if(c->queueIsFull()) return false;
   }
@@ -878,6 +758,7 @@ bool AsyncWebSocket::availableForWriteAll(){
 }
 
 bool AsyncWebSocket::availableForWrite(uint32_t id){
+  AsyncWebSocketUniqueLock lock(_mutex);
   for(const auto& c: _clients){
     if(c->queueIsFull() && (c->id() == id )) return false;
   }
@@ -885,12 +766,14 @@ bool AsyncWebSocket::availableForWrite(uint32_t id){
 }
 
 size_t AsyncWebSocket::count() const {
-  return _clients.count_if([](AsyncWebSocketClient * c){
+  AsyncWebSocketUniqueLock lock(_mutex);
+  return _clients.count_if([](const std::shared_ptr<AsyncWebSocketClient>& c){
     return c->status() == WS_CONNECTED;
   });
 }
 
-AsyncWebSocketClient * AsyncWebSocket::client(uint32_t id){
+std::shared_ptr<AsyncWebSocketClient> AsyncWebSocket::client(uint32_t id){
+  AsyncWebSocketUniqueLock lock(_mutex);
   for(const auto &c: _clients){
     if(c->id() == id && c->status() == WS_CONNECTED){
       return c;
@@ -901,12 +784,13 @@ AsyncWebSocketClient * AsyncWebSocket::client(uint32_t id){
 
 
 void AsyncWebSocket::close(uint32_t id, uint16_t code, const char * message){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient> c = client(id);
   if(c)
     c->close(code, message);
 }
 
 void AsyncWebSocket::closeAll(uint16_t code, const char * message){
+  AsyncWebSocketUniqueLock lock(_mutex);
   for(const auto& c: _clients){
     if(c->status() == WS_CONNECTED)
       c->close(code, message);
@@ -915,13 +799,14 @@ void AsyncWebSocket::closeAll(uint16_t code, const char * message){
 
 void AsyncWebSocket::cleanupClients(uint16_t maxClients)
 {
+  AsyncWebSocketUniqueLock lock(_mutex);
   if (count() > maxClients){
     _clients.front()->close();
   }
 }
 
 void AsyncWebSocket::ping(uint32_t id, uint8_t *data, size_t len){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient> c = client(id);
   if(c)
     c->ping(data, len);
 }
@@ -934,7 +819,7 @@ void AsyncWebSocket::pingAll(uint8_t *data, size_t len){
 }
 
 void AsyncWebSocket::text(uint32_t id, const char * message, size_t len){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient>  c = client(id);
   if(c)
     c->text(message, len);
 }
@@ -956,7 +841,7 @@ void AsyncWebSocket::textAll(const AsyncWebSocketMessageBuffer* buffer){
 }
 
 void AsyncWebSocket::binary(uint32_t id, const char * message, size_t len){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient>  c = client(id);
   if(c)
     c->binary(message, len);
 }
@@ -977,12 +862,13 @@ void AsyncWebSocket::binaryAll(const AsyncWebSocketMessageBuffer* buffer){
 }
 
 void AsyncWebSocket::message(uint32_t id, AsyncWebSocketMessage *message){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient>  c = client(id);
   if(c)
     c->message(message);
 }
 
 void AsyncWebSocket::messageAll(const AsyncWebSocketMultiMessage &message){
+  AsyncWebSocketUniqueLock lock(_mutex);
   for(const auto& c: _clients){
     if(c->status() == WS_CONNECTED)
       c->message(message.clone());
@@ -990,7 +876,7 @@ void AsyncWebSocket::messageAll(const AsyncWebSocketMultiMessage &message){
 }
 
 size_t AsyncWebSocket::printf(uint32_t id, const char *format, ...){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient>  c = client(id);
   if(c){
     va_list arg;
     va_start(arg, format);
@@ -1027,7 +913,7 @@ size_t AsyncWebSocket::printfAll(const char *format, ...) {
 
 #ifndef ESP32
 size_t AsyncWebSocket::printf_P(uint32_t id, PGM_P formatP, ...){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient>  c = client(id);
   if(c != NULL){
     va_list arg;
     va_start(arg, formatP);
@@ -1076,7 +962,7 @@ void AsyncWebSocket::text(uint32_t id, const String &message){
   text(id, message.c_str(), message.length());
 }
 void AsyncWebSocket::text(uint32_t id, const __FlashStringHelper *message){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient>  c = client(id);
   if(c != NULL)
     c->text(message);
 }
@@ -1093,6 +979,7 @@ void AsyncWebSocket::textAll(const String &message){
   textAll(message.c_str(), message.length());
 }
 void AsyncWebSocket::textAll(const __FlashStringHelper *message){
+  AsyncWebSocketUniqueLock lock(_mutex);
   for(const auto& c: _clients){
     if(c->status() == WS_CONNECTED)
       c->text(message);
@@ -1111,7 +998,7 @@ void AsyncWebSocket::binary(uint32_t id, const String &message){
   binary(id, message.c_str(), message.length());
 }
 void AsyncWebSocket::binary(uint32_t id, const __FlashStringHelper *message, size_t len){
-  AsyncWebSocketClient * c = client(id);
+  std::shared_ptr<AsyncWebSocketClient>  c = client(id);
   if(c != NULL)
     c-> binary(message, len);
 }
@@ -1128,9 +1015,10 @@ void AsyncWebSocket::binaryAll(const String &message){
   binaryAll(message.c_str(), message.length());
 }
 void AsyncWebSocket::binaryAll(const __FlashStringHelper *message, size_t len){
+  AsyncWebSocketUniqueLock lock(_mutex);
   for(const auto& c: _clients){
     if(c->status() == WS_CONNECTED)
-      c-> binary(message, len);
+      c->binary(message, len);
   }
  }
 
@@ -1203,10 +1091,6 @@ AsyncWebSocketMessageBuffer* AsyncWebSocket::makeBuffer(const uint8_t * data, si
   return new AsyncWebSocketMessageBuffer(std::move(buffer));
 }
 
-const AsyncWebSocket::AsyncWebSocketClientLinkedList& AsyncWebSocket::getClients() const {
-  return _clients;
-}
-
 /*
  * Response to Web Socket request - sends the authorization and detaches the TCP Client from the web server
  * Authentication code from https://github.com/Links2004/arduinoWebSockets/blob/master/src/WebSockets.cpp#L480
@@ -1259,7 +1143,23 @@ void AsyncWebSocketResponse::_respond(AsyncWebServerRequest *request){
 size_t AsyncWebSocketResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
   (void)time;
   if(len){
-    new AsyncWebSocketClient(request, _server);
+    auto ws_client = std::make_shared<AsyncWebSocketClient>(request);
+    if (ws_client) {    
+      auto client = request->client();
+      auto wscptr = ws_client.get();
+      client->setRxTimeout(0);
+      client->onError([](void *r, AsyncClient* c, int8_t error){ (void)c; ((AsyncWebSocketClient*)(r))->_onError(error); }, wscptr);
+      client->onAck([](void *r, AsyncClient* c, size_t len, uint32_t time){ (void)c; ((AsyncWebSocketClient*)(r))->_onAck(len, time); }, wscptr);
+      client->onDisconnect([](void *r, AsyncClient* c){ ((AsyncWebSocketClient*)(r))->_onDisconnect(); delete c; }, wscptr);
+      client->onTimeout([](void *r, AsyncClient* c, uint32_t time){ (void)c; ((AsyncWebSocketClient*)(r))->_onTimeout(time); }, wscptr);
+      client->onData([](void *r, AsyncClient* c, void *buf, size_t len){ (void)c; ((AsyncWebSocketClient*)(r))->_onData(buf, len); }, wscptr);
+      client->onPoll([](void *r, AsyncClient* c){ (void)c; ((AsyncWebSocketClient*)(r))->_onPoll(); }, wscptr);
+      _server->_addClient(ws_client);
+      _server->_handleEvent(wscptr, WS_EVT_CONNECT, request, NULL, 0);
+      delete request;
+    } else {
+      request->send(500);
+    }
   }
   return 0;
 }

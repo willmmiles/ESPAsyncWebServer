@@ -72,6 +72,7 @@ class SharedBuffer {
   size_t size() const { return _buf ? _buf->size() : 0U; };
   char& operator[](ptrdiff_t p) const { return *(data() + p); };
   void clear() { _buf.reset(); };
+  long use_count() const { return _buf.use_count(); };
 
   explicit operator bool() const { return _buf && *_buf; };
   DynamicBuffer copy() const { return *_buf; }; // Make a copy of the buffer
