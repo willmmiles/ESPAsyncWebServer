@@ -46,7 +46,7 @@ typedef std::unique_lock<AsyncWebSocketMutex> AsyncWebSocketUniqueLock;
 
 // Explicit locking is unnecessary in cooperative multitasking environment
 struct AsyncWebSocketMutex {};
-struct AsyncWebSocketUniqueLock {};
+struct AsyncWebSocketUniqueLock { AsyncWebSocketUniqueLock(AsyncWebSocketMutex){} };
 
 #endif /* ESP32 */
 
