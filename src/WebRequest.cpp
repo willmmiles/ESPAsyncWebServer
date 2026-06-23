@@ -464,6 +464,20 @@ bool AsyncWebServerRequest::_parseChunkedBytes(uint8_t *buf, size_t len) {
   return false;
 }
 
+static inline const char *skip_ows(const char *p, const char *end) {
+  while (p < end && (*p == ' ' || *p == '\t')) {
+    p++;
+  }
+  return p;
+}
+
+static inline const char *rtrim_ows(const char *start, const char *end) {
+  while (end > start && (*(end - 1) == ' ' || *(end - 1) == '\t')) {
+    end--;
+  }
+  return end;
+}
+
 bool AsyncWebServerRequest::_parseReqHeader() {
   AsyncWebHeader header = AsyncWebHeader::parse(_temp);
   if (header) {
@@ -476,60 +490,45 @@ bool AsyncWebServerRequest::_parseReqHeader() {
       // Trim _contentType defensively; AsyncWebHeader::parse now strips all
       // leading OWS per RFC 7230, but trim() guards against any future change.
       _contentType.trim();
-      // Media types are case-insensitive (RFC 2045 §5.1), so lowercase the
-      // entire header value once and reuse it for all subsequent searches.
-      String lowcase(value);
-      lowcase.toLowerCase();
-      if (lowcase.startsWith(T_MULTIPART_)) {
-        // Case-insensitive, quote-aware search for the boundary parameter.
-        // We scan forward tracking quoted-string state so that a 'boundary='
-        // substring inside a quoted parameter value (e.g. foo="x; boundary=y")
-        // is never mistaken for the real parameter delimiter.  A ';' inside a
-        // quoted-string is not a parameter separator per RFC 2045 §5.1.
-        // We also require 'boundary=' to be immediately preceded by ';' (with
-        // optional OWS) so that e.g. 'x-boundary=' is not matched.
-        int bpos = -1;
-        bool inQuotes = false;
-        const char *lc = lowcase.c_str();
-        const int llen = (int)lowcase.length();
-        // Stop early: a ';' followed by OWS and 'boundary=' needs at least
-        // T_BOUNDARY_LEN+1 chars after it.  Without OWS the minimum is
-        // i+1+T_BOUNDARY_LEN+1 <= llen, i.e. i < llen-(T_BOUNDARY_LEN+1).
-        // The inner OWS-aware check below still guards the OWS case.
-        const int lscan = llen - (int)(T_BOUNDARY_LEN + 1);
-        for (int i = 0; i < lscan; i++) {
-          char c = lc[i];
-          if (inQuotes) {
-            if (c == '\\' && i + 1 < llen) {
-              i++;  // skip quoted-pair — the escaped character cannot terminate the quoted-string
-            } else if (c == '"') {
-              inQuotes = false;
-            }
-          } else {
-            if (c == '"') {
-              inQuotes = true;
-            } else if (c == ';') {
-              // Skip OWS after the ';' and check for 'boundary='
-              int j = i + 1;
-              while (j < llen && (lc[j] == ' ' || lc[j] == '\t')) {
-                j++;
+      if (strncasecmp(value.c_str(), T_MULTIPART_, sizeof(T_MULTIPART_) - 1) == 0) {
+        // Delimiter-structured, quote-aware search for the boundary parameter.
+        // We scan parameter by parameter (';'-delimited) so that 'boundary='
+        // inside a quoted value (e.g. foo="x; boundary=y") is never mistaken
+        // for the real parameter.  A ';' inside a quoted-string is not a
+        // parameter separator per RFC 2045 §5.1.
+        const char *p = value.c_str();
+        const char *end = p + value.length();
+
+        // Advance past the media-type to the first ';'
+        while (p < end && *p != ';') {
+          p++;
+        }
+
+        const char *bvdata = nullptr;
+        while (p < end) {
+          p++;  // consume ';'
+          p = skip_ows(p, end);
+          if ((size_t)(end - p) > T_BOUNDARY_LEN && strncasecmp(p, T_BOUNDARY, T_BOUNDARY_LEN) == 0) {
+            bvdata = p + T_BOUNDARY_LEN;
+            break;
+          }
+          // Advance to the next ';', skipping over any quoted-string value
+          while (p < end && *p != ';') {
+            if (*p++ == '"') {
+              while (p < end && *p != '"') {
+                if (*p == '\\' && p + 1 < end) {
+                  p++;  // skip quoted-pair
+                }
+                p++;
               }
-              // If there is not enough room left for "boundary=" plus at least
-              // one value byte, no later ';' can match either — stop scanning.
-              if (j + (int)T_BOUNDARY_LEN + 1 > llen) {
-                break;
-              }
-              // strncmp stops at the null terminator, so no separate length
-              // guard is needed: a short suffix causes a non-matching result.
-              if (std::strncmp(lc + j, T_BOUNDARY, T_BOUNDARY_LEN) == 0) {
-                bpos = j;
-                break;
+              if (p < end) {
+                p++;  // skip closing '"'
               }
             }
           }
         }
 
-        if (bpos < 0) {
+        if (bvdata == nullptr) {
           // No valid boundary parameter found — cannot parse multipart body.
           async_ws_log_d("Missing multipart boundary parameter, aborting");
           _parseState = PARSE_REQ_FAIL;
@@ -537,29 +536,16 @@ bool AsyncWebServerRequest::_parseReqHeader() {
           return true;
         }
 
-        // Use a raw pointer + length pair into the original (mixed-case) header
-        // value to extract the boundary without any intermediate heap allocation.
-        // Avoids std::string_view which requires C++17 (unavailable on LibreTiny).
-        // The value may be either a token or a quoted-string (RFC 2046 §5.1).
-        const char *bvdata = value.c_str() + bpos + T_BOUNDARY_LEN;
-        size_t bvlen = value.length() - bpos - T_BOUNDARY_LEN;
-
-        // Strip leading OWS (space/tab) after 'boundary=' to preserve prior
-        // trim() behavior and handle non-RFC but common whitespace variants.
-        while (bvlen > 0 && (bvdata[0] == ' ' || bvdata[0] == '\t')) {
-          bvdata++;
-          bvlen--;
-        }
+        // Strip leading OWS after 'boundary=' — non-RFC but seen in the wild.
+        bvdata = skip_ows(bvdata, end);
 
         // Clear any previous value — duplicate Content-Type headers must not
         // concatenate into the boundary string.
         _boundary = String();
 
-        if (bvlen > 0 && bvdata[0] == '"') {
-          // Quoted-string form: scan once from the opening '"', unescaping
-          // quoted-pairs on the fly and writing into _boundary directly.
+        if (bvdata < end && *bvdata == '"') {
+          // Quoted-string: unescape quoted-pairs into _boundary directly.
           bvdata++;  // skip opening '"'
-          bvlen--;
           // Reserve at most 70 chars — the RFC 2046 §5.1 maximum — rather than
           // the full (attacker-controlled) remaining suffix length.
           if (!_boundary.reserve(70)) {
@@ -569,10 +555,10 @@ bool AsyncWebServerRequest::_parseReqHeader() {
             return true;
           }
           bool closed = false;
-          for (size_t i = 0; i < bvlen; ++i) {
-            char c = bvdata[i];
-            if (c == '\\' && i + 1 < bvlen) {
-              _boundary += bvdata[++i];  // quoted-pair: keep only the escaped char
+          while (bvdata < end) {
+            char c = *bvdata++;
+            if (c == '\\' && bvdata < end) {
+              _boundary += *bvdata++;  // quoted-pair: keep only the escaped char
             } else if (c == '"') {
               closed = true;
               break;
@@ -596,16 +582,12 @@ bool AsyncWebServerRequest::_parseReqHeader() {
           }
         } else {
           // Token form: value ends at the next ';' or end of string.
-          // Trim trailing OWS — no copy until the final assign.
-          for (size_t k = 0; k < bvlen; ++k) {
-            if (bvdata[k] == ';') {
-              bvlen = k;
-              break;
-            }
+          const char *tok_end = bvdata;
+          while (tok_end < end && *tok_end != ';') {
+            tok_end++;
           }
-          while (bvlen > 0 && (bvdata[bvlen - 1] == ' ' || bvdata[bvlen - 1] == '\t')) {
-            bvlen--;
-          }
+          tok_end = rtrim_ows(bvdata, tok_end);
+          size_t bvlen = (size_t)(tok_end - bvdata);
           // CWE-190 / DoS fix: RFC 2046 §5.1 limits boundary strings to 70 characters.
           if (bvlen == 0 || bvlen > 70) {
             async_ws_log_d("Invalid multipart boundary length (%u), aborting", (unsigned)bvlen);
