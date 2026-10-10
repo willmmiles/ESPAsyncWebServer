@@ -763,12 +763,14 @@ bool AsyncWebSocketClient::_handleClientFrame(uint8_t *data, size_t datalen, boo
         }
         if (_status == WS_DISCONNECTING) {
           _status = WS_DISCONNECTED;
+          _pstate = AwsParseState::Error;  // terminal state: ignore any further data before the disconnect completes
           if (_client) {
             _client->close();
           }
           return false;  // our object is now destroyed, so we must return immediately to avoid accessing any member
         } else {
           _status = WS_DISCONNECTING;
+          _pstate = AwsParseState::Error;  // terminal state: ignore any further data before the disconnect completes
           if (_client) {
             _client->ackLater();
           }
