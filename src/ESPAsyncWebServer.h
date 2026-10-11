@@ -772,8 +772,10 @@ public:
   AsyncWebServerResponse *beginResponse_P(int code, const String &contentType, const uint8_t *content, size_t len, AwsTemplateProcessor callback = nullptr) {
     return beginResponse(code, contentType.c_str(), content, len, callback);
   }
+#ifndef ESP8266
   [[deprecated("Replaced by beginResponse(int code, const String& contentType, const char* content = asyncsrv::empty, AwsTemplateProcessor callback = nullptr)"
   )]]
+#endif
   AsyncWebServerResponse *beginResponse_P(int code, const String &contentType, PGM_P content, AwsTemplateProcessor callback = nullptr);
 
   /**
