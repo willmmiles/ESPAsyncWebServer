@@ -680,22 +680,18 @@ bool AsyncWebSocketClient::_handleClientFrame(uint8_t *data, size_t datalen, boo
   // Process a frame from the client.  Header information is stored in _pinfo.
   // Returns true on successful handling, false on error.
 
+  // Apply masking if necessary
   if (_pinfo.masked) {
     for (size_t i = 0; i < datalen; i++) {
       data[i] ^= _pinfo.mask[(_pinfo.index + i) % 4];
     }
   }
 
-  if (_pinfo.index == 0) {  // first fragment of the frame
-    // init message_opcode for this frame
-    // note: For next WS_CONTINUATION frames, they have opcode 0, so message_opcode will stay like the first frame
-    if (_pinfo.opcode == WS_TEXT || _pinfo.opcode == WS_BINARY) {
-      _pinfo.message_opcode = _pinfo.opcode;
-    }
-    // init frame number to 0 if only 1 frame or if this is the first frame of a fragmented message
-    if (_pinfo.final || datalen < _pinfo.len) {
-      _pinfo.num = 0;
-    }
+  if ((_pinfo.opcode == WS_TEXT || _pinfo.opcode == WS_BINARY) && (_pinfo.index == 0)) {
+    // First fragment of the first frame in a new user data message
+    // Init message_opcode and continuation frame counter for this message
+    _pinfo.message_opcode = _pinfo.opcode;
+    _pinfo.num = 0;
   }
 
   if ((datalen + _pinfo.index) < _pinfo.len) {  // more fragments to read for this frame
@@ -723,12 +719,9 @@ bool AsyncWebSocketClient::_handleClientFrame(uint8_t *data, size_t datalen, boo
         // Save data in buffer
         memcpy(_pbuffer.get() + _pinfo.index, data, datalen);
       }
-
-      // track index for next fragment
-      _pinfo.index += datalen;
     }
   } else if ((datalen + _pinfo.index) == _pinfo.len) {  // this is the last fragment for this frame
-    if (_pinfo.opcode < WS_DISCONNECT) {                // most likely case: continuation or text/binary frame
+    if (_pinfo.opcode < WS_DISCONNECT) {                // continuation or text/binary frame
       async_ws_log_v(
         "[%s][%" PRIu32 "] DATA processing final fragment of %s frame %" PRIu32 ", index: %" PRIu64 ", len: %" PRIu32 "", _server->url(), _clientId,
         (_pinfo.message_opcode == WS_TEXT) ? "text" : "binary", _pinfo.num, _pinfo.index, (uint32_t)datalen
@@ -738,11 +731,7 @@ bool AsyncWebSocketClient::_handleClientFrame(uint8_t *data, size_t datalen, boo
         return false;  // stop processing on failure
       }
 
-      if (_pinfo.final) {
-        _pinfo.num = 0;
-      } else {
-        _pinfo.num += 1;
-      }
+      _pinfo.num += 1;
     } else {  // control frame
       if (_pbuffer) {
         memcpy(_pbuffer.get() + _pinfo.index, data, datalen);
@@ -792,10 +781,9 @@ bool AsyncWebSocketClient::_handleClientFrame(uint8_t *data, size_t datalen, boo
         close(WS_CLOSE_PROTOCOL_ERROR, nullptr);  // Close the connection with a protocol error code
         return false;
       }
-    }
 
-    _pinfo.index = _pinfo.len;  // mark packet as complete
-    _pbuffer.reset();           // free any control frame buffer
+      _pbuffer.reset();  // free any control frame buffer
+    }
   } else {
     // unexpected frame protocol error - how is this possible?
     async_ws_log_v(
@@ -807,6 +795,8 @@ bool AsyncWebSocketClient::_handleClientFrame(uint8_t *data, size_t datalen, boo
     return false;
   }
 
+  // track index for next fragment, or mark frame as complete
+  _pinfo.index += datalen;
   return true;
 }
 
