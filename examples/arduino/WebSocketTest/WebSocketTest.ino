@@ -42,6 +42,13 @@
 //   closeall                   -> closeAll(1011, "server going away")
 //   drop <id>                  -> close(id) a specific client by id
 //   status                     -> serial dump of every client
+//   trace                      -> report each received data frame / ping back
+//                                 to the sender instead of handling it, until
+//                                 it disconnects (one tracing client at a time):
+//                                   "trace data num=<n> op=<op> msgop=<op>
+//                                    final=<0|1> index=<i> len=<l> data=<hex>"
+//                                   "trace ping"
+//                                 data= holds at most the first 32 bytes.
 //
 // Boundary lengths worth trying (exercises frame header size variants and
 // fragmentation across the TCP MSS):
@@ -123,6 +130,9 @@ static AsyncWebSocket ws(WS_URL);
 // Monotonic message counter baked into deterministic payloads so a receiver
 // can verify ordering / completeness across fragments and bursts.
 static uint32_t g_seq = 0;
+
+// Client receiving receive-path trace reports (see "trace"); 0 = none.
+static uint32_t g_traceId = 0;
 
 // ...........................................................................
 // Payload helpers
@@ -374,14 +384,29 @@ static void handleCommand(AsyncWebSocketClient *client, const char *cmd) {
     for (auto &c : ws.getClients()) {
       Serial.printf("  id=%" PRIu32 " status=%d queueLen=%u queueFull=%d\n", c.id(), (int)c.status(), (unsigned)c.queueLen(), c.queueIsFull() ? 1 : 0);
     }
+  } else if (verb == "trace") {
+    g_traceId = client->id();
+    client->text("trace on");
   } else {
-    client->text("ERR: unknown command. Try: ping pingall echo echoall bin binall text textall burst masked close closeall drop status");
+    client->text("ERR: unknown command. Try: ping pingall echo echoall bin binall text textall burst masked close closeall drop status trace");
   }
 }
 
 // ...........................................................................
 // WebSocket event handler
 // ...........................................................................
+
+static void traceData(AsyncWebSocketClient *client, const AwsFrameInfo *info, const uint8_t *data, size_t len) {
+  char line[160];
+  int n = snprintf(
+    line, sizeof(line), "trace data num=%" PRIu32 " op=%u msgop=%u final=%u index=%" PRIu64 " len=%" PRIu64 " data=", info->num, info->opcode,
+    info->message_opcode, info->final, info->index, info->len
+  );
+  for (size_t i = 0; i < len && i < 32; i++) {
+    n += snprintf(line + n, sizeof(line) - n, "%02x", data[i]);
+  }
+  client->text(line);
+}
 
 static void onWsEvent(AsyncWebSocket *srv, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   switch (type) {
@@ -402,7 +427,18 @@ static void onWsEvent(AsyncWebSocket *srv, AsyncWebSocketClient *client, AwsEven
       client->ping((const uint8_t *)&t, sizeof(t));
       break;
     }
-    case WS_EVT_DISCONNECT: Serial.printf("[ws] disconnect id=%" PRIu32 " (now %u client(s))\n", client->id(), (unsigned)ws.count()); break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("[ws] disconnect id=%" PRIu32 " (now %u client(s))\n", client->id(), (unsigned)ws.count());
+      if (client->id() == g_traceId) {
+        g_traceId = 0;
+      }
+      break;
+
+    case WS_EVT_PING:
+      if (client->id() == g_traceId) {
+        client->text("trace ping");
+      }
+      break;
 
     case WS_EVT_ERROR: Serial.printf("[ws] error id=%" PRIu32 "\n", client->id()); break;
 
@@ -423,6 +459,10 @@ static void onWsEvent(AsyncWebSocket *srv, AsyncWebSocketClient *client, AwsEven
     case WS_EVT_DATA:
     {
       AwsFrameInfo *info = (AwsFrameInfo *)arg;
+      if (client->id() == g_traceId) {
+        traceData(client, info, data, len);
+        break;
+      }
       // We only care about fully-assembled TEXT messages for commands.
       if (info->final && info->index == 0 && info->len == len && info->message_opcode == WS_TEXT) {
         // Null-terminate (library guarantees it for text frames, but be safe).
