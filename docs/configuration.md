@@ -16,8 +16,8 @@ Here are some recommendations to avoid them and build-time flags you can change.
 
 - `CONFIG_ASYNC_TCP_STACK_SIZE`: stack size for the thread that runs sever events and callbacks. Default is 16k that is a way too much waste for well-defined short async code or simple static file handling. You might want to cosider reducing it to 4-8k to same RAM usage. If you do not know what this is or not sure about your callback code demands - leave it as default, should be enough even for very hungry callbacks in most cases.
 
-- `ASYNCWEBSERVER_USE_CHUNK_INFLIGHT`: inflight control for chunked responses.
-  If you need to serve chunk requests with a really low buffer (which should be avoided), you can set `-D ASYNCWEBSERVER_USE_CHUNK_INFLIGHT=0` to disable the in-flight control.
+- `ASYNCWEBSERVER_USE_CHUNK_INFLIGHT`: in-flight credits for chunked and large responses.
+  Set `-D ASYNCWEBSERVER_USE_CHUNK_INFLIGHT=0` to disable them. Either way, while data is in flight a response is refilled only once a whole send buffer fits.
 
 > [!NOTE]
 > This relates to ESP32 only, ESP8266 uses different ESPAsyncTCP lib that does not has this build options

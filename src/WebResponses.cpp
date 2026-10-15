@@ -351,33 +351,30 @@ size_t AsyncAbstractResponse::write_send_buffs(AsyncWebServerRequest *request, s
     return 0;
   }
 
-#if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
-  /*
-    for response payloads with unknown length or length larger than TCP_WND we need to control AsyncTCP's queue and in-flight fragmentation.
-    Either user callback could fill buffer with very small chunks or long running large response could receive a lot of poll() calls here,
-    both could flood asynctcp's queue with large number of events to handle and fragment socket buffer space for large responses.
-    Let's ignore polled acks and acks in case when available window size is less than our used buffer size since we won't be able to fill and send it whole
-    That way we could balance on having at least half tcp win in-flight while minimizing send/ack events in asynctcp Q
-    This could decrease sustained bandwidth for one single connection but would drastically improve parallelism and equalize bandwidth sharing
-  */
-  // return a credit for each chunk of acked data (polls does not give any credits)
-  if (len) {
-    ++_in_flight_credit;
-  }
+  _ackedLength += len;
 
-  if (_chunked || !_sendContentLength || (_sentLength > CONFIG_LWIP_TCP_WND_DEFAULT)) {
-    if (!_in_flight_credit || (ASYNC_RESPONCE_BUFF_SIZE > request->client()->space())) {
-      // take the credit back since we are ignoring this ack and rely on other inflight data acks
-      if (len) {
-        --_in_flight_credit;
-      }
+  // Refill only once a whole buffer fits: refilling into a nearly full window sends short bursts that
+  // never merge back, nearly doubling the sends per byte and adding client acks.
+  // With nothing in flight no ack will come to retry, so never defer then.
+  if (_writtenLength > _ackedLength) {
+    if (ASYNC_RESPONCE_BUFF_SIZE > request->client()->space()) {
       return 0;
     }
+#if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
+    // If we're out of in-flight credits, and we're waiting for acks, skip sends on poll events (len == 0)
+    // In-flight credits are only checked for chunked, unknown-length, or large responses.
+    if (!len && !_in_flight_credit && (_chunked || !_sendContentLength || (_sentLength > CONFIG_LWIP_TCP_WND_DEFAULT))) {
+      return 0;
+    }
+#endif
+  }
+
+#if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
+  if (len) {
+    // acks earn a credit
+    ++_in_flight_credit;
   }
 #endif
-
-  // this is not functionally needed in AsyncAbstractResponse itself, but kept for compatibility if some of the derived classes are rely on it somehow
-  _ackedLength += len;
 
   size_t payloadlen{0};  // amount of data to be written to tcp sockbuff during this call, used as return value of this method
 
@@ -492,18 +489,14 @@ size_t AsyncAbstractResponse::write_send_buffs(AsyncWebServerRequest *request, s
       }
     } while (_send_buffer_len);  // go on till we have something in buffer pending to send
 
-    // execute sending whatever we have in sock buffs now
-    request->client()->send();
-    _writtenLength += payloadlen;
-#if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
-    // Take a credit only for data actually put in flight.  When the source
-    // had nothing yet (RESPONSE_TRY_AGAIN), nothing will be acked to return
-    // the credit, and polls don't return credits, so spending one here would
-    // stall the response for good once the credits run out.
     if (payloadlen) {
-      --_in_flight_credit;  // take a credit
-    }
+      // immediately send whatever we have in sock buffs now
+      request->client()->send();
+      _writtenLength += payloadlen;
+#if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
+      --_in_flight_credit;  // something got sent, take a credit
 #endif
+    }
     if (_send_buffer_len == 0) {
       // buffer empty, we can release mem, otherwise need to keep it till next run (should not happen under normal conditions)
       _send_buffer.reset();
