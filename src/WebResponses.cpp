@@ -363,12 +363,10 @@ size_t AsyncAbstractResponse::write_send_buffs(AsyncWebServerRequest *request, s
   // return a credit for each chunk of acked data (polls does not give any credits)
   if (len) {
     ++_in_flight_credit;
-    _in_flight -= std::min(len, _in_flight);
   }
 
   if (_chunked || !_sendContentLength || (_sentLength > CONFIG_LWIP_TCP_WND_DEFAULT)) {
     if (!_in_flight_credit || (ASYNC_RESPONCE_BUFF_SIZE > request->client()->space())) {
-      // async_ws_log_d("defer user call in_flight:%u, tcpwin:%u", _in_flight, request->client()->space());
       // take the credit back since we are ignoring this ack and rely on other inflight data acks
       if (len) {
         --_in_flight_credit;
@@ -392,7 +390,6 @@ size_t AsyncAbstractResponse::write_send_buffs(AsyncWebServerRequest *request, s
       // we were not able to fit all headers in current buff, send this part here and return later for the rest
       _writtenLength += pcb_written;  // otherwise counted with the body below
 #if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
-      _in_flight += pcb_written;
       --_in_flight_credit;  // take a credit
 #endif
       if (!request->client()->send()) {
@@ -504,7 +501,6 @@ size_t AsyncAbstractResponse::write_send_buffs(AsyncWebServerRequest *request, s
     // the credit, and polls don't return credits, so spending one here would
     // stall the response for good once the credits run out.
     if (payloadlen) {
-      _in_flight += payloadlen;
       --_in_flight_credit;  // take a credit
     }
 #endif

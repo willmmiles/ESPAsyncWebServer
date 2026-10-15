@@ -64,8 +64,6 @@ protected:
 class AsyncAbstractResponse : public AsyncWebServerResponse {
 private:
 #if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
-  // amount of response data in-flight, i.e. sent, but not acked yet
-  size_t _in_flight{0};
   // in-flight queue credits
   size_t _in_flight_credit{2};
 #endif
