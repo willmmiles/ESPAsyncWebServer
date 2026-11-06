@@ -559,10 +559,12 @@ private:
   String _contentType;
   String _boundary;
   String _authorization;
+#ifdef ASYNCWEBSERVER_VALIDATE_DIGEST_URL
   // Effective request URI (RFC 7230 §5.5): raw request-target — path + query string,
   // percent-encoded form as received on the request line, before any rewriting.
   // Used to validate the "uri" parameter of Digest authentication.
   String _rawUri;
+#endif
   RequestedConnectionType _reqconntype;
   AsyncAuthType _authMethod = AsyncAuthType::AUTH_NONE;
   // set by authenticateDigest() when the client nonce was valid but expired (RFC 7616 §3.3):

@@ -38,11 +38,14 @@ enum {
 
 AsyncWebServerRequest::AsyncWebServerRequest(AsyncWebServer *s, AsyncClient *c)
   : _client(c), _server(s), _handler(NULL), _response(NULL), _onDisconnectfn(NULL), _temp(), _parseState(PARSE_REQ_START), _version(0),
-    _method(AsyncWebRequestMethod::HTTP_UNKNOWN), _url(), _host(), _contentType(), _boundary(), _authorization(), _rawUri(), _reqconntype(RCT_HTTP),
-    _authMethod(AsyncAuthType::AUTH_NONE), _isMultipart(false), _isPlainPost(false), _expectingContinue(false), _contentLength(0), _parsedLength(0),
-    _multiParseState(0), _boundaryPosition(0), _itemStartIndex(0), _itemSize(0), _itemName(), _itemFilename(), _itemType(), _itemValue(), _itemBuffer(0),
-    _itemBufferIndex(0), _itemIsFile(false), _chunkStartIndex(0), _chunkOffset(0), _chunkSize(0), _chunkedParseState(CHUNK_NONE), _chunkedLastChar(0),
-    _tempObject(NULL) {
+    _method(AsyncWebRequestMethod::HTTP_UNKNOWN), _url(), _host(), _contentType(), _boundary(), _authorization(),
+#ifdef ASYNCWEBSERVER_VALIDATE_DIGEST_URL
+    _rawUri(),
+#endif
+    _reqconntype(RCT_HTTP), _authMethod(AsyncAuthType::AUTH_NONE), _isMultipart(false), _isPlainPost(false), _expectingContinue(false), _contentLength(0),
+    _parsedLength(0), _multiParseState(0), _boundaryPosition(0), _itemStartIndex(0), _itemSize(0), _itemName(), _itemFilename(), _itemType(), _itemValue(),
+    _itemBuffer(0), _itemBufferIndex(0), _itemIsFile(false), _chunkStartIndex(0), _chunkOffset(0), _chunkSize(0), _chunkedParseState(CHUNK_NONE),
+    _chunkedLastChar(0), _tempObject(NULL) {
   c->onError(
     [](void *r, AsyncClient *client, int8_t error) {
       (void)client;
@@ -326,9 +329,10 @@ bool AsyncWebServerRequest::_parseReqHead() {
   if (_method == AsyncWebRequestMethod::HTTP_INVALID) {
     return false;
   }
-
+#ifdef ASYNCWEBSERVER_STORE_RAWURI
   // keep the effective request URI (RFC 7230 §5.5): raw request-target, path + query string
   _rawUri = u;
+#endif
 
   String g;
   index = u.indexOf('?');
@@ -1319,7 +1323,11 @@ bool AsyncWebServerRequest::authenticateDigest(
     return false;
   }
   DigestAuthStatus status = checkDigestAuthentication(
+#ifdef ASYNCWEBSERVER_VALIDATE_DIGEST_URL
     _authorization.c_str(), methodToString(), username, password, realm, passwordIsHash, _rawUri.c_str(), digest->secret, digest->nonceTtl
+#else
+    _authorization.c_str(), methodToString(), username, password, realm, passwordIsHash, nullptr, digest->secret, digest->nonceTtl
+#endif
   );
   if (status == DigestAuthStatus::DIGEST_AUTH_STALE_NONCE) {
     _authStale = true;
@@ -1366,7 +1374,11 @@ bool AsyncWebServerRequest::authenticateDigest(const char *hash) const {
     return false;
   }
   DigestAuthStatus status = checkDigestAuthentication(
+#ifdef ASYNCWEBSERVER_STORE_RAWURI
     _authorization.c_str(), methodToString(), username.c_str(), hStr.c_str(), realm.c_str(), true, _rawUri.c_str(), digest->secret, digest->nonceTtl
+#else
+    _authorization.c_str(), methodToString(), username.c_str(), hStr.c_str(), realm.c_str(), true, nullptr, digest->secret, digest->nonceTtl
+#endif
   );
   if (status == DigestAuthStatus::DIGEST_AUTH_STALE_NONCE) {
     _authStale = true;
